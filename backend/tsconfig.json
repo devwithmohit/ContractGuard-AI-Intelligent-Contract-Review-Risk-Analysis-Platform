@@ -1,0 +1,66 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "lib": [
+            "ESNext"
+        ],
+        "types": [
+            "bun-types"
+        ],
+        "strict": true,
+        "strictNullChecks": true,
+        "noUncheckedIndexedAccess": true,
+        "forceConsistentCasingInFileNames": true,
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "declaration": true,
+        "declarationMap": true,
+        "sourceMap": true,
+        "outDir": "./dist",
+        "rootDir": "./src",
+        "baseUrl": ".",
+        "paths": {
+            "@/*": [
+                "./src/*"
+            ],
+            "@/lib/*": [
+                "./src/lib/*"
+            ],
+            "@/db/*": [
+                "./src/db/*"
+            ],
+            "@/ai/*": [
+                "./src/ai/*"
+            ],
+            "@/services/*": [
+                "./src/services/*"
+            ],
+            "@/routes/*": [
+                "./src/routes/*"
+            ],
+            "@/middleware/*": [
+                "./src/middleware/*"
+            ],
+            "@/plugins/*": [
+                "./src/plugins/*"
+            ],
+            "@/workers/*": [
+                "./src/workers/*"
+            ]
+        },
+        "noEmit": false
+    },
+    "include": [
+        "src/**/*.ts"
+    ],
+    "exclude": [
+        "node_modules",
+        "dist",
+        "**/*.test.ts"
+    ]
+}
