@@ -95,7 +95,13 @@ export async function healthCheck(): Promise<{ ok: boolean; latencyMs: number }>
 export async function closeRedis(): Promise<void> {
     if (redis) {
         log.info('Closing Redis connection...');
-        await redis.quit();
+        try {
+            await redis.quit();
+        } catch {
+            // If Redis never connected (lazyConnect), quit() fails.
+            // Use disconnect() which doesn't send a command over the wire.
+            redis.disconnect();
+        }
         redis = null;
         log.info('Redis connection closed');
     }
