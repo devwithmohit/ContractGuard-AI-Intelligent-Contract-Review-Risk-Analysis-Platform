@@ -1,7 +1,94 @@
 import { createLogger } from '../lib/logger.js';
 import type { ExtractedClause } from './prompts.js';
+import { buildRiskPrompt } from './prompts.js';
+import { AIServiceError } from '../lib/errors.js';
 
 const log = createLogger('ai.riskAnalyzer');
+
+// ─── Deep Risk Analysis via Groq (gpt-oss-120b → LLaMA fallback) ─
+
+export interface DeepRiskAnalysis {
+    risk_score: number;   // 0-100
+    reasoning: string;
+    top_risks: string[];
+}
+
+/**
+ * Call Groq's OpenAI-compatible API for deep risk analysis.
+ * Tries gpt-oss-120b first, falls back to llama-3.1-8b-instant.
+ */
+export async function analyzeRiskDeep(clauses: ExtractedClause[]): Promise<DeepRiskAnalysis> {
+    const models = [
+        process.env.GROQ_RISK_MODEL || 'gpt-oss-120b',
+        'llama-3.1-8b-instant', // Fallback to LLaMA if GPT fails
+    ];
+
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) throw new AIServiceError('GROQ_API_KEY is not set', 'groq');
+
+    const prompt = buildRiskPrompt(clauses);
+
+    for (const model of models) {
+        try {
+            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        { role: 'system', content: 'You are a legal risk analyst.' },
+                        { role: 'user', content: prompt },
+                    ],
+                    temperature: 0.1,
+                    max_tokens: 2000,
+                }),
+                signal: AbortSignal.timeout(60_000),
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new AIServiceError(
+                    `Model ${model} failed: HTTP ${response.status} — ${errorBody.slice(0, 200)}`,
+                    'groq',
+                    model,
+                );
+            }
+
+            const data = await response.json() as {
+                choices: Array<{ message: { content: string } }>;
+            };
+
+            const content = data.choices[0]?.message?.content;
+            if (!content) throw new AIServiceError(`Model ${model} returned empty response`, 'groq', model);
+
+            // GPT models are better at JSON but still may wrap in fences
+            const cleaned = content.replace(/```json|```/g, '').trim();
+            const parsed = JSON.parse(cleaned) as DeepRiskAnalysis;
+
+            // Basic validation
+            if (typeof parsed.risk_score !== 'number' || parsed.risk_score < 0 || parsed.risk_score > 100) {
+                throw new Error(`Invalid risk_score from model ${model}: ${parsed.risk_score}`);
+            }
+
+            log.info({ model, risk_score: parsed.risk_score }, 'Deep risk analysis complete');
+            return parsed;
+        } catch (error) {
+            log.warn({ model, error }, 'Risk analysis failed, trying next model');
+            if (model === models[models.length - 1]) {
+                // Last model failed — throw
+                throw error instanceof AIServiceError
+                    ? error
+                    : new AIServiceError('All risk analysis models failed', 'groq');
+            }
+        }
+    }
+
+    // TypeScript exhaustiveness — unreachable
+    throw new AIServiceError('All risk analysis models failed', 'groq');
+}
 
 // ─── Weight Table ─────────────────────────────────────────────
 // Higher weight = clause has more business impact.

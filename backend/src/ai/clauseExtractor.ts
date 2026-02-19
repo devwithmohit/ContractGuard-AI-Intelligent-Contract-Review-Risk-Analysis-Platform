@@ -15,10 +15,9 @@ const log = createLogger('ai.clauseExtractor');
 // ─── Configuration ────────────────────────────────────────────
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const TOGETHER_API_URL = 'https://api.together.xyz/v1/chat/completions';
 
-const GROQ_MODEL = 'llama-3.1-8b-instant';
-const TOGETHER_MODEL = 'mistralai/Mixtral-8x7B-Instruct-v0.1';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+const GROQ_FALLBACK_MODEL = 'llama-3.1-8b-instant';
 
 // Max context for clause extraction (keep room for response)
 const MAX_EXTRACT_CHARS = 12_000;
@@ -53,7 +52,7 @@ const ContractTypeSchema = z.object({
 
 /**
  * Extract all clauses from a contract using LLaMA 3.1 via Groq.
- * Falls back to Mistral via Together AI on failure.
+ * Falls back to a lighter Groq model on failure.
  *
  * For large contracts, splits into overlapping windows and deduplicates results.
  */
@@ -133,36 +132,29 @@ export async function detectContractType(contractText: string): Promise<{
 
 // ─── LLM Caller ──────────────────────────────────────────────
 
-type Provider = 'groq' | 'together';
-
 async function callLlm(
     prompt: string,
-    provider: Provider = 'groq',
+    model: string = GROQ_MODEL,
 ): Promise<string> {
     try {
-        return await callProvider(prompt, provider);
+        return await callGroqModel(prompt, model);
     } catch (err) {
-        if (provider === 'groq') {
-            log.warn({ err }, 'Groq failed — falling back to Together AI');
-            return callProvider(prompt, 'together');
+        if (model !== GROQ_FALLBACK_MODEL) {
+            log.warn({ err, model }, `Groq model ${model} failed — falling back to ${GROQ_FALLBACK_MODEL}`);
+            return callGroqModel(prompt, GROQ_FALLBACK_MODEL);
         }
         throw err;
     }
 }
 
-async function callProvider(prompt: string, provider: Provider): Promise<string> {
-    const apiKey = provider === 'groq'
-        ? process.env.GROQ_API_KEY
-        : process.env.TOGETHER_API_KEY;
+async function callGroqModel(prompt: string, model: string): Promise<string> {
+    const apiKey = process.env.GROQ_API_KEY;
 
     if (!apiKey) {
-        throw new Error(`${provider.toUpperCase()}_API_KEY is not set`);
+        throw new Error('GROQ_API_KEY is not set');
     }
 
-    const url = provider === 'groq' ? GROQ_API_URL : TOGETHER_API_URL;
-    const model = provider === 'groq' ? GROQ_MODEL : TOGETHER_MODEL;
-
-    const response = await fetch(url, {
+    const response = await fetch(GROQ_API_URL, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -186,7 +178,7 @@ async function callProvider(prompt: string, provider: Provider): Promise<string>
 
     if (!response.ok) {
         const body = await response.text();
-        throw new Error(`${provider} API error ${response.status}: ${body}`);
+        throw new Error(`Groq API error (${model}) ${response.status}: ${body}`);
     }
 
     const data = await response.json() as {
@@ -194,7 +186,7 @@ async function callProvider(prompt: string, provider: Provider): Promise<string>
     };
 
     const content = data.choices[0]?.message?.content;
-    if (!content) throw new Error(`${provider} returned empty response`);
+    if (!content) throw new Error(`Groq model ${model} returned empty response`);
 
     return content;
 }

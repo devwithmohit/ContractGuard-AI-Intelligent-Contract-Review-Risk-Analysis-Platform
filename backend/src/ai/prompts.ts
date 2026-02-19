@@ -101,6 +101,54 @@ OUTPUT FORMAT (JSON):
 Return ONLY the JSON object. No markdown. No explanation.`;
 }
 
+// ─── Deep Risk Analysis (for gpt-oss-120b via Groq) ──────────
+
+/**
+ * Optimized for GPT-class models: structured instructions, explicit JSON contract.
+ * Used by analyzeRiskDeep() in riskAnalyzer.ts.
+ */
+export const RISK_ANALYSIS_PROMPT = `You are a legal risk analyst. Analyze these contract clauses for business risk.
+
+Clauses:
+{clauses_json}
+
+Calculate an overall risk score from 0-100 where:
+- 0-25: Low risk (favorable terms)
+- 26-50: Medium risk (standard commercial terms)
+- 51-75: High risk (unfavorable terms, needs negotiation)
+- 76-100: Critical risk (deal-breaking terms)
+
+Return ONLY valid JSON in this exact format (no markdown, no explanation):
+{
+  "risk_score": <number 0-100>,
+  "reasoning": "<concise explanation in 2-3 sentences>",
+  "top_risks": ["<risk 1>", "<risk 2>", "<risk 3>"]
+}
+
+Focus on:
+- Financial exposure (liability caps, indemnification)
+- Lock-in risk (auto-renewal, termination difficulty)
+- Compliance obligations (data processing, audits)
+- Power imbalance (one-sided terms)`;
+
+/**
+ * Build a concrete prompt from extracted clauses.
+ */
+export function buildRiskPrompt(clauses: ExtractedClause[]): string {
+    const clausesJson = JSON.stringify(
+        clauses.map((c) => ({
+            type: c.clause_type,
+            risk_level: c.risk_level,
+            explanation: c.risk_explanation,
+            text: c.text.slice(0, 300), // Keep prompt concise
+        })),
+        null,
+        2,
+    );
+
+    return RISK_ANALYSIS_PROMPT.replace('{clauses_json}', clausesJson);
+}
+
 // ─── Executive Summary ───────────────────────────────────────
 
 export interface SummaryInput {

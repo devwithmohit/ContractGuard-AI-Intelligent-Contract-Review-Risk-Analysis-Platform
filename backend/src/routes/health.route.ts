@@ -52,15 +52,24 @@ export default async function healthRoute(fastify: FastifyInstance) {
                 storageCheck = { ok: false, latencyMs: -1 };
             }
 
-            // Groq API check
+            // Groq API check — test with risk model via chat completion
             let groqCheck = { ok: false, latencyMs: -1 };
             try {
                 const groqKey = process.env.GROQ_API_KEY;
                 if (groqKey) {
                     const start = performance.now();
-                    const res = await fetch('https://api.groq.com/openai/v1/models', {
-                        headers: { Authorization: `Bearer ${groqKey}` },
-                        signal: AbortSignal.timeout(5000),
+                    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${groqKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            model: process.env.GROQ_RISK_MODEL || 'gpt-oss-120b',
+                            messages: [{ role: 'user', content: 'test' }],
+                            max_tokens: 5,
+                        }),
+                        signal: AbortSignal.timeout(10_000),
                     });
                     groqCheck = {
                         ok: res.ok,

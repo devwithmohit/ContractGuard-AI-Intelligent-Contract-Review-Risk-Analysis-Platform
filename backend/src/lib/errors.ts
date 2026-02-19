@@ -149,6 +149,22 @@ export class AnalysisFailedError extends AppError {
     }
 }
 
+// ─── 422: AI Service Error ───────────────────────────────────────
+export class AIServiceError extends AppError {
+    public readonly provider: 'groq' | 'jina';
+    public readonly modelUsed?: string;
+
+    constructor(
+        message: string,
+        provider: 'groq' | 'jina',
+        modelUsed?: string,
+    ) {
+        super(message, 422, 'ai-service-error', 'AI Service Error');
+        this.provider = provider;
+        this.modelUsed = modelUsed;
+    }
+}
+
 // ─── 429: Rate Limit Exceeded ────────────────────────────────────
 export class RateLimitError extends AppError {
     public readonly retryAfterSeconds: number;

@@ -19,7 +19,7 @@ import { extractText } from '../ai/extractor.js';
 import { chunkText } from '../ai/chunker.js';
 import { generateEmbeddings } from '../ai/embeddings.js';
 import { extractClauses, extractDates, detectContractType } from '../ai/clauseExtractor.js';
-import { computeRiskScore } from '../ai/riskAnalyzer.js';
+import { computeRiskScore, analyzeRiskDeep } from '../ai/riskAnalyzer.js';
 import { generateSummary } from '../ai/summarizer.js';
 
 const log = createLogger('worker.contractAnalysis');
@@ -135,12 +135,36 @@ async function processContractAnalysis(
 
         // ── Step 7: Compute risk score ────────────────────────
         await updateProgress(7, 'Computing risk score');
-        const risk = computeRiskScore(clauses);
 
-        log.info(
-            { contractId, riskScore: risk.overallScore, riskLabel: risk.riskLabel },
-            'Risk score computed',
-        );
+        // Algorithmic score from clause weights
+        const risk = computeRiskScore(clauses);
+        let finalRiskScore = risk.overallScore;
+
+        // Deep LLM risk analysis — blend 70% algo, 30% LLM
+        try {
+            log.info({ contractId }, 'Starting deep risk analysis via Groq');
+            const deepRisk = await analyzeRiskDeep(clauses);
+
+            finalRiskScore = Math.round(risk.overallScore * 0.7 + deepRisk.risk_score * 0.3);
+
+            log.info(
+                {
+                    contractId,
+                    algoScore: risk.overallScore,
+                    llmScore: deepRisk.risk_score,
+                    finalScore: finalRiskScore,
+                    model: process.env.GROQ_RISK_MODEL || 'gpt-oss-120b',
+                    topRisks: deepRisk.top_risks,
+                },
+                'Blended risk score computed (70% algo + 30% LLM)',
+            );
+        } catch (riskErr) {
+            log.error(
+                { contractId, err: riskErr },
+                'Deep risk analysis failed — using algorithmic score only',
+            );
+            // Fall through with algo-only score
+        }
 
         // ── Step 8: Generate summary ──────────────────────────
         await updateProgress(8, 'Generating executive summary');
@@ -159,7 +183,7 @@ async function processContractAnalysis(
             effective_date: dates.effective_date,
             expiration_date: dates.expiration_date,
             auto_renewal: dates.auto_renewal,
-            risk_score: risk.overallScore,
+            risk_score: finalRiskScore,
             summary,
             status: 'active',
             last_analyzed_at: new Date().toISOString(),
@@ -170,7 +194,7 @@ async function processContractAnalysis(
                 jobId: job.id,
                 contractId,
                 orgId,
-                riskScore: risk.overallScore,
+                riskScore: finalRiskScore,
                 clauseCount: clauses.length,
                 embeddingCount: insertedCount,
                 duration: `${((Date.now() - job.timestamp) / 1000).toFixed(1)}s`,
