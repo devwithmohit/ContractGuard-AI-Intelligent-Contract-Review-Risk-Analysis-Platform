@@ -118,13 +118,7 @@ async function extractPdfOcr(buffer: Buffer): Promise<ExtractionResult> {
 async function extractFromDocx(buffer: Buffer): Promise<ExtractionResult> {
     log.info({ size: buffer.length }, 'Extracting text from DOCX');
 
-    // DOCX is a ZIP — extract word/document.xml and parse paragraph text
-    const JSZip = await import('jszip').then((m) => m.default ?? m).catch(() => null);
-
-    if (!JSZip) {
-        throw new Error('jszip is required for DOCX extraction. Run: bun add jszip');
-    }
-
+    const JSZip = (await import('jszip')).default;
     const zip = await JSZip.loadAsync(buffer);
     const documentXml = zip.file('word/document.xml');
 
@@ -137,7 +131,7 @@ async function extractFromDocx(buffer: Buffer): Promise<ExtractionResult> {
     // Extract text from <w:t> elements (Word text runs)
     const textMatches = xmlContent.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) ?? [];
     const rawText = textMatches
-        .map((match) => match.replace(/<[^>]+>/g, ''))
+        .map((match: string) => match.replace(/<[^>]+>/g, ''))
         .join(' ');
 
     // Extract paragraph breaks from <w:p> elements
@@ -153,7 +147,7 @@ async function extractFromDocx(buffer: Buffer): Promise<ExtractionResult> {
 
     return {
         text,
-        pageCount: 1, // DOCX page count not easily determinable without rendering
+        pageCount: 1,
         method: 'digital',
         wordCount: countWords(text),
     };

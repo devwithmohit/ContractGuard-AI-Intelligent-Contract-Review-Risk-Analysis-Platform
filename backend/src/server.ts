@@ -2,6 +2,11 @@ import { buildApp } from './app.js';
 import { createLogger } from './lib/logger.js';
 import { closePool } from './db/client.js';
 import { closeRedis } from './lib/redis.js';
+import { closeQueues, scheduleAlertCheck } from './services/queue.service.js';
+import { startContractAnalysisWorker } from './workers/contractAnalysis.worker.js';
+import { startEmbeddingWorker } from './workers/embedding.worker.js';
+import { startAlertCheckWorker } from './workers/alertCheck.worker.js';
+import type { Worker } from 'bullmq';
 
 const log = createLogger('server');
 
@@ -19,19 +24,43 @@ async function start() {
         process.exit(1);
     }
 
+    // ─── Start Workers ───────────────────────────────────────
+    const workers: Worker[] = [];
+
+    try {
+        workers.push(startContractAnalysisWorker());
+        workers.push(startEmbeddingWorker());
+        workers.push(startAlertCheckWorker());
+
+        // Schedule daily alert check cron (idempotent — clears old repeatable jobs first)
+        await scheduleAlertCheck();
+
+        log.info('✅ All workers started and alert cron scheduled');
+    } catch (err) {
+        log.error({ err }, 'Failed to start workers — server will continue without them');
+    }
+
     // ─── Graceful Shutdown ───────────────────────────────────
     const shutdown = async (signal: string) => {
         log.info({ signal }, 'Received shutdown signal, closing gracefully...');
 
         try {
-            // Stop accepting new requests
+            // 1. Stop accepting new HTTP requests
             await app.close();
             log.info('Fastify server closed');
 
-            // Close database pool
+            // 2. Close all BullMQ workers (waits for in-flight jobs to finish)
+            await Promise.all(workers.map((w) => w.close()));
+            log.info('All workers closed');
+
+            // 3. Close all BullMQ queue connections
+            await closeQueues();
+            log.info('All queues closed');
+
+            // 4. Close database pool
             await closePool();
 
-            // Close Redis connection
+            // 5. Close Redis connection (last — workers and queues need it above)
             await closeRedis();
 
             log.info('All connections closed. Goodbye! 👋');

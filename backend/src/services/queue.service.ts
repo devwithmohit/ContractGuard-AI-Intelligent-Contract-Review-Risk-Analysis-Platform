@@ -1,5 +1,5 @@
 import { Queue, type JobsOptions } from 'bullmq';
-import { getRedis } from '../lib/redis.js';
+import { getRedisOptions } from '../lib/redis.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('service.queue');
@@ -79,7 +79,7 @@ export function getContractAnalysisQueue(): Queue<ContractAnalysisJobData> {
         contractAnalysisQueue = new Queue<ContractAnalysisJobData>(
             QUEUE_NAMES.CONTRACT_ANALYSIS,
             {
-                connection: getRedis().duplicate(),
+                connection: getRedisOptions(),
                 defaultJobOptions: {
                     ...DEFAULT_JOB_OPTIONS,
                     // Analysis jobs get higher priority timeout
@@ -101,7 +101,7 @@ export function getEmbeddingQueue(): Queue<EmbeddingJobData> {
         embeddingQueue = new Queue<EmbeddingJobData>(
             QUEUE_NAMES.EMBEDDING,
             {
-                connection: getRedis().duplicate(),
+                connection: getRedisOptions(),
                 defaultJobOptions: DEFAULT_JOB_OPTIONS,
             },
         );
@@ -118,7 +118,7 @@ export function getAlertCheckQueue(): Queue<AlertCheckJobData> {
         alertCheckQueue = new Queue<AlertCheckJobData>(
             QUEUE_NAMES.ALERT_CHECK,
             {
-                connection: getRedis().duplicate(),
+                connection: getRedisOptions(),
                 defaultJobOptions: {
                     ...DEFAULT_JOB_OPTIONS,
                     attempts: 2,   // Cron job — less aggressive retry

@@ -3,6 +3,43 @@ import { createLogger } from './logger.js';
 
 const log = createLogger('redis');
 
+// ─── BullMQ Connection Options ───────────────────────────────
+// BullMQ bundles its own ioredis, so passing our Redis instance
+// causes a structural type conflict. Instead we export plain options
+// that BullMQ's ioredis can use to build its own connection.
+export interface BullMQConnectionOptions {
+    host: string;
+    port: number;
+    password?: string;
+    tls?: Record<string, unknown>;
+    maxRetriesPerRequest: null; // BullMQ requires null (not a number)
+    enableReadyCheck: boolean;
+    enableOfflineQueue: boolean;
+}
+
+/**
+ * Return plain connection options for BullMQ Queues and Workers.
+ * Do NOT pass the Redis singleton — BullMQ creates its own connections.
+ */
+export function getRedisOptions(): BullMQConnectionOptions {
+    const url = process.env.REDIS_URL;
+    if (!url) throw new Error('REDIS_URL environment variable is not set');
+
+    // Parse redis[s]://[:password@]host[:port][/db]
+    const parsed = new URL(url);
+    const isTLS = parsed.protocol === 'rediss:';
+
+    return {
+        host: parsed.hostname,
+        port: parseInt(parsed.port || '6379', 10),
+        password: parsed.password || undefined,
+        tls: isTLS ? {} : undefined,
+        maxRetriesPerRequest: null,   // Required by BullMQ
+        enableReadyCheck: false,      // Required by BullMQ
+        enableOfflineQueue: false,
+    };
+}
+
 // ─── Singleton Instance ──────────────────────────────────────
 let redis: Redis | null = null;
 
@@ -107,4 +144,4 @@ export async function closeRedis(): Promise<void> {
     }
 }
 
-export default { getRedis, healthCheck, closeRedis };
+export default { getRedis, getRedisOptions, healthCheck, closeRedis };

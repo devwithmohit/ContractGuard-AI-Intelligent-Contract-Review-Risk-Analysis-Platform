@@ -18,6 +18,31 @@ export interface TextChunk {
     hash: string;           // SHA-256 of chunk text (for deduplication)
 }
 
+// ─── tiktoken import type ────────────────────────────────────
+// tiktoken exports get_encoding (underscore), not getEncoding.
+// We use a minimal interface here to avoid import issues.
+interface TiktokenEncoder {
+    encode: (text: string) => Uint32Array;
+    free: () => void;
+}
+
+async function loadEncoder(): Promise<TiktokenEncoder> {
+    // tiktoken v1.x exports get_encoding (not getEncoding)
+    const tiktoken = await import('tiktoken').catch(() => {
+        throw new Error('tiktoken is required. Run: bun add tiktoken');
+    });
+
+    // Handle both naming conventions across tiktoken versions
+    const getEnc = (tiktoken as unknown as Record<string, unknown>)['get_encoding']
+        ?? (tiktoken as unknown as Record<string, unknown>)['getEncoding'];
+
+    if (typeof getEnc !== 'function') {
+        throw new Error('tiktoken: could not find get_encoding or getEncoding export');
+    }
+
+    return (getEnc as (enc: string) => TiktokenEncoder)(ENCODING_MODEL);
+}
+
 // ─── Main Entry Point ─────────────────────────────────────────
 
 /**
@@ -37,14 +62,7 @@ export async function chunkText(text: string): Promise<TextChunk[]> {
 
     log.debug({ textLength: text.length }, 'Starting text chunking');
 
-    // Load tiktoken lazily
-    const { Tiktoken } = await import('tiktoken').catch(() => {
-        throw new Error('tiktoken is required. Run: bun add tiktoken');
-    });
-
-    // Load cl100k_base encoding (used by GPT-4 and Jina v2)
-    const { getEncoding } = await import('tiktoken');
-    const enc = getEncoding(ENCODING_MODEL);
+    const enc = await loadEncoder();
 
     try {
         const sentences = splitIntoSentences(text);
@@ -54,11 +72,12 @@ export async function chunkText(text: string): Promise<TextChunk[]> {
         let currentTokens: number[] = [];
         let chunkIndex = 0;
 
-        const getTokens = (s: string) => Array.from(enc.encode(s));
-        const tokenCount = (toks: number[]) => toks.length;
+        // encode() returns Uint32Array — convert to number[] for consistent typing
+        const getTokens = (s: string): number[] => Array.from(enc.encode(s)) as number[];
+        const tokenCount = (toks: number[]): number => toks.length;
 
         for (const sentence of sentences) {
-            const sentenceTokens = getTokens(sentence);
+            const sentenceTokens: number[] = getTokens(sentence);
 
             // If adding this sentence would exceed limit, flush current chunk
             if (
@@ -109,8 +128,6 @@ export async function chunkText(text: string): Promise<TextChunk[]> {
  * Preserves sentence-ending punctuation and handles common abbreviations.
  */
 function splitIntoSentences(text: string): string[] {
-    // Split on sentence boundaries: period/!/? followed by space + capital letter
-    // Also split on paragraph breaks (double newlines)
     const raw = text
         .replace(/\n\n+/g, ' ¶ ') // Preserve paragraph breaks as markers
         .split(/(?<=[.!?])\s+(?=[A-Z"'])|(?= ¶ )/)
@@ -126,7 +143,7 @@ function splitIntoSentences(text: string): string[] {
  */
 function buildOverlap(
     sentences: string[],
-    enc: { encode: (s: string) => Uint32Array },
+    enc: TiktokenEncoder,
     maxOverlapTokens: number,
 ): { sentences: string[]; tokens: number[] } {
     const overlapSentences: string[] = [];
@@ -135,7 +152,7 @@ function buildOverlap(
     // Walk backwards through sentences until we fill the overlap budget
     for (let i = sentences.length - 1; i >= 0; i--) {
         const s = sentences[i]!;
-        const toks = Array.from(enc.encode(s));
+        const toks: number[] = Array.from(enc.encode(s)) as number[];
 
         if (overlapTokens.length + toks.length > maxOverlapTokens) break;
 
@@ -159,8 +176,7 @@ function makeChunk(text: string, index: number, tokenCount: number): TextChunk {
  * Useful for checking if text fits within a model's context window.
  */
 export async function countTokens(text: string): Promise<number> {
-    const { getEncoding } = await import('tiktoken');
-    const enc = getEncoding(ENCODING_MODEL);
+    const enc = await loadEncoder();
     try {
         return enc.encode(text).length;
     } finally {
