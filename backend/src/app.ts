@@ -11,6 +11,7 @@ import metricsPlugin from './plugins/metrics.plugin.js';
 
 // Routes
 import healthRoute from './routes/health.route.js';
+import v1Routes from './routes/v1/index.js';
 
 /**
  * Build and configure the Fastify application instance.
@@ -151,8 +152,8 @@ export async function buildApp() {
     // ─── 4. Routes ──────────────────────────────────────────
     await app.register(healthRoute);
 
-    // API v1 routes will be registered here in Module B10:
-    // await app.register(contractRoutes, { prefix: '/api/v1' });
+    // API v1 routes (Module B10)
+    await app.register(v1Routes, { prefix: '/api/v1' });
 
     return app;
 }
