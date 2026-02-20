@@ -67,8 +67,8 @@ export function getRedis(): Redis {
                 return delay;
             },
 
-            // TLS for Upstash
-            tls: url.startsWith('rediss://') ? {} : undefined,
+            // TLS for Upstash — enable for rediss:// or *.upstash.io hosts
+            tls: (url.startsWith('rediss://') || url.includes('upstash.io')) ? {} : undefined,
 
             // Timeouts
             connectTimeout: 5000,
@@ -110,6 +110,20 @@ export function getRedis(): Redis {
 }
 
 /**
+ * Explicitly connect Redis (await the connection).
+ * Call this at server startup before accepting requests.
+ */
+export async function connectRedis(): Promise<void> {
+    const client = getRedis();
+    try {
+        await client.connect();
+        log.info('Redis explicitly connected at startup');
+    } catch (err) {
+        log.warn({ err }, 'Redis startup connect failed — will keep retrying in background');
+    }
+}
+
+/**
  * Health check — tests Redis connectivity.
  * Returns latency in milliseconds.
  */
@@ -144,4 +158,4 @@ export async function closeRedis(): Promise<void> {
     }
 }
 
-export default { getRedis, getRedisOptions, healthCheck, closeRedis };
+export default { getRedis, getRedisOptions, connectRedis, healthCheck, closeRedis };

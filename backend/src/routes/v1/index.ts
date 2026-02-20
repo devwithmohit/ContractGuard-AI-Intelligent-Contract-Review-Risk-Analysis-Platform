@@ -24,7 +24,6 @@
  *
  *   POST   /api/v1/webhooks/stripe
  */
-import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
 
 // Contract routes
@@ -48,7 +47,7 @@ import dashboardStatsRoute from './dashboard/stats.route.js';
 // Webhook routes
 import stripeWebhookRoute from './webhooks/stripe.route.js';
 
-export default fp(async function v1Routes(fastify: FastifyInstance) {
+export default async function v1Routes(fastify: FastifyInstance) {
     // ── Contracts ──────────────────────────────────────────
     await fastify.register(uploadRoute);
     await fastify.register(listRoute);
@@ -69,6 +68,4 @@ export default fp(async function v1Routes(fastify: FastifyInstance) {
 
     // ── Webhooks ───────────────────────────────────────────
     await fastify.register(stripeWebhookRoute);
-}, {
-    name: 'v1-routes',
-});
+}

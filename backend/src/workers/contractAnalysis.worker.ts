@@ -153,7 +153,7 @@ async function processContractAnalysis(
                     algoScore: risk.overallScore,
                     llmScore: deepRisk.risk_score,
                     finalScore: finalRiskScore,
-                    model: process.env.GROQ_RISK_MODEL || 'gpt-oss-120b',
+                    model: process.env.GROQ_RISK_MODEL || 'openai/gpt-oss-120b',
                     topRisks: deepRisk.top_risks,
                 },
                 'Blended risk score computed (70% algo + 30% LLM)',

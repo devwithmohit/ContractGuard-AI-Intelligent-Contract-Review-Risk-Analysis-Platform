@@ -65,7 +65,7 @@ export default async function healthRoute(fastify: FastifyInstance) {
                             'Content-Type': 'application/json',
                         },
                         body: JSON.stringify({
-                            model: process.env.GROQ_RISK_MODEL || 'gpt-oss-120b',
+                            model: process.env.GROQ_RISK_MODEL || 'openai/gpt-oss-120b',
                             messages: [{ role: 'user', content: 'test' }],
                             max_tokens: 5,
                         }),

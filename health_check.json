@@ -1,0 +1,1 @@
+{"status":"degraded","timestamp":"2026-02-19T18:25:57.983Z","checks":{"database":{"ok":false,"latencyMs":-1},"redis":{"ok":true,"latencyMs":43},"storage":{"ok":false,"latencyMs":284},"groqApi":{"ok":false,"latencyMs":48}},"version":"1.0.0","uptime":171,"responseTimeMs":5381}

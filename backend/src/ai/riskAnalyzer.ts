@@ -19,7 +19,7 @@ export interface DeepRiskAnalysis {
  */
 export async function analyzeRiskDeep(clauses: ExtractedClause[]): Promise<DeepRiskAnalysis> {
     const models = [
-        process.env.GROQ_RISK_MODEL || 'gpt-oss-120b',
+        process.env.GROQ_RISK_MODEL || 'openai/gpt-oss-120b',
         'llama-3.1-8b-instant', // Fallback to LLaMA if GPT fails
     ];
 

@@ -1,7 +1,8 @@
 import { buildApp } from './app.js';
 import { createLogger } from './lib/logger.js';
 import { closePool } from './db/client.js';
-import { closeRedis } from './lib/redis.js';
+import { closePrisma } from './db/prisma.js';
+import { closeRedis, connectRedis } from './lib/redis.js';
 import { closeQueues, scheduleAlertCheck } from './services/queue.service.js';
 import { startContractAnalysisWorker } from './workers/contractAnalysis.worker.js';
 import { startEmbeddingWorker } from './workers/embedding.worker.js';
@@ -11,6 +12,9 @@ import type { Worker } from 'bullmq';
 const log = createLogger('server');
 
 async function start() {
+    // Connect Redis before building app (rate limiter needs it)
+    await connectRedis();
+
     const app = await buildApp();
 
     const port = parseInt(process.env.PORT ?? '3000', 10);
@@ -59,6 +63,9 @@ async function start() {
 
             // 4. Close database pool
             await closePool();
+
+            // 4b. Close Prisma client
+            await closePrisma();
 
             // 5. Close Redis connection (last — workers and queues need it above)
             await closeRedis();
