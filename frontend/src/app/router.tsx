@@ -39,6 +39,8 @@ const ContractDetailPage = lazy(() => import('@/pages/contracts/ContractDetailPa
 const UploadPage = lazy(() => import('@/pages/contracts/UploadPage'));
 const SearchPage = lazy(() => import('@/pages/search/SearchPage'));
 const AlertsPage = lazy(() => import('@/pages/alerts/AlertsPage'));
+const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
+const TeamPage = lazy(() => import('@/pages/team/TeamPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 
 // ─── Auth guard ───────────────────────────────────────────────
@@ -186,6 +188,26 @@ const router = createBrowserRouter([
                         element: (
                             <SuspensePage>
                                 <AlertsPage />
+                            </SuspensePage>
+                        ),
+                    },
+
+                    // Settings
+                    {
+                        path: '/settings',
+                        element: (
+                            <SuspensePage>
+                                <SettingsPage />
+                            </SuspensePage>
+                        ),
+                    },
+
+                    // Team
+                    {
+                        path: '/team',
+                        element: (
+                            <SuspensePage>
+                                <TeamPage />
                             </SuspensePage>
                         ),
                     },

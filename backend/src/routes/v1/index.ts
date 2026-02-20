@@ -47,7 +47,15 @@ import dashboardStatsRoute from './dashboard/stats.route.js';
 // Webhook routes
 import stripeWebhookRoute from './webhooks/stripe.route.js';
 
+// Auth routes
+import authSetupRoute from './auth/setup.route.js';
+import authSignupRoute from './auth/signup.route.js';
+
 export default async function v1Routes(fastify: FastifyInstance) {
+    // ── Auth ───────────────────────────────────────────────
+    await fastify.register(authSetupRoute);
+    await fastify.register(authSignupRoute);
+
     // ── Contracts ──────────────────────────────────────────
     await fastify.register(uploadRoute);
     await fastify.register(listRoute);

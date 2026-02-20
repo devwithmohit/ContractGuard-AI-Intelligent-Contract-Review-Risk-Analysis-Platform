@@ -159,7 +159,58 @@ async function sendAlertEmails(contracts: Contract[]): Promise<number> {
 
     let sent = 0;
 
+    // Group contracts by org_id to batch lookup emails
+    const orgIds = [...new Set(contracts.map((c) => c.org_id))];
+    const orgEmailMap = new Map<string, string>();
+
+    for (const orgId of orgIds) {
+        try {
+            const result = await query<{ email: string }>(
+                `SELECT u.email FROM org_members om
+                 JOIN auth.users u ON om.user_id = u.id
+                 WHERE om.org_id = $1 AND om.role = 'owner'
+                 LIMIT 1`,
+                [orgId],
+            );
+            if (result.rows[0]?.email) {
+                orgEmailMap.set(orgId, result.rows[0].email);
+            }
+        } catch (err) {
+            // Fallback: if auth.users isn't accessible via service role,
+            // try looking up from Supabase admin API
+            log.debug({ err, orgId }, 'Could not query auth.users directly — using fallback');
+            try {
+                const supabaseUrl = process.env.SUPABASE_URL;
+                const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+                if (supabaseUrl && supabaseKey) {
+                    const memberResult = await query<{ user_id: string }>(
+                        `SELECT user_id FROM org_members WHERE org_id = $1 AND role = 'owner' LIMIT 1`,
+                        [orgId],
+                    );
+                    if (memberResult.rows[0]?.user_id) {
+                        const { createClient } = await import('@supabase/supabase-js');
+                        const adminClient = createClient(supabaseUrl, supabaseKey, {
+                            auth: { autoRefreshToken: false, persistSession: false },
+                        });
+                        const { data } = await adminClient.auth.admin.getUserById(memberResult.rows[0].user_id);
+                        if (data?.user?.email) {
+                            orgEmailMap.set(orgId, data.user.email);
+                        }
+                    }
+                }
+            } catch (fallbackErr) {
+                log.warn({ fallbackErr, orgId }, 'Could not look up org owner email');
+            }
+        }
+    }
+
     for (const contract of contracts) {
+        const toEmail = orgEmailMap.get(contract.org_id);
+        if (!toEmail) {
+            log.debug({ contractId: contract.id, orgId: contract.org_id }, 'No email found for org — skipping');
+            continue;
+        }
+
         const daysUntil = getDaysUntil(contract.expiration_date!);
         const urgency = daysUntil <= 7 ? 'URGENT: ' : daysUntil <= 14 ? 'Action Required: ' : '';
 
@@ -172,7 +223,7 @@ async function sendAlertEmails(contracts: Contract[]): Promise<number> {
                 },
                 body: JSON.stringify({
                     from: emailFrom,
-                    to: 'team@organization.com', // In production, look up org admin email
+                    to: toEmail,
                     subject: `${urgency}Contract Expiring in ${daysUntil} Days: ${contract.name}`,
                     html: buildEmailHtml(contract, daysUntil),
                 }),

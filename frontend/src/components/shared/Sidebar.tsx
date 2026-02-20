@@ -17,6 +17,8 @@ import {
     ShieldCheck,
     LogOut,
     X,
+    Settings,
+    Users,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuthContext } from '@/app/providers';
@@ -56,6 +58,18 @@ const NAV_ITEMS = [
         to: '/alerts',
         icon: Bell,
         id: 'nav-alerts',
+    },
+    {
+        label: 'Team',
+        to: '/team',
+        icon: Users,
+        id: 'nav-team',
+    },
+    {
+        label: 'Settings',
+        to: '/settings',
+        icon: Settings,
+        id: 'nav-settings',
     },
 ] as const;
 

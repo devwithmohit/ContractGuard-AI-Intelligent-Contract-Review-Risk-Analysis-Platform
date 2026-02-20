@@ -42,9 +42,19 @@ const queryClient = new QueryClient({
 
 // ─── Auth Context ─────────────────────────────────────────────
 
+export interface UserProfile {
+    id: string;
+    email: string;
+    orgId: string | null;
+    orgName: string | null;
+    role: string | null;
+    tier: string | null;
+}
+
 interface AuthContextValue {
     session: Session | null;
     user: User | null;
+    profile: UserProfile | null;
     isLoading: boolean;
     isAuthenticated: boolean;
 }
@@ -52,6 +62,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue>({
     session: null,
     user: null,
+    profile: null,
     isLoading: true,
     isAuthenticated: false,
 });
@@ -60,26 +71,65 @@ export function useAuthContext(): AuthContextValue {
     return useContext(AuthContext);
 }
 
+/**
+ * Call POST /api/v1/auth/setup after login.
+ * Creates org for new users; returns profile for existing users.
+ * Idempotent and safe to call on every session change.
+ */
+async function setupUser(accessToken: string): Promise<UserProfile | null> {
+    try {
+        const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+        const response = await fetch(`${baseUrl}/api/v1/auth/setup`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+            },
+        });
+
+        if (!response.ok) return null;
+
+        const data = await response.json() as { user: UserProfile };
+        return data.user;
+    } catch {
+        return null;
+    }
+}
+
 function AuthProvider({ children }: { children: ReactNode }) {
     const [session, setSession] = useState<Session | null>(null);
+    const [profile, setProfile] = useState<UserProfile | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
         // Load existing session on mount (no network call — reads from localStorage)
         supabase.auth.getSession().then(({ data: { session } }) => {
             setSession(session);
-            setIsLoading(false);
+            if (session?.access_token) {
+                setupUser(session.access_token).then((p) => {
+                    setProfile(p);
+                    setIsLoading(false);
+                });
+            } else {
+                setIsLoading(false);
+            }
         });
 
         // Subscribe to auth state changes (login, logout, token refresh)
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             (_event, session) => {
                 setSession(session);
-                setIsLoading(false);
 
-                // When user logs out, clear all TanStack Query cache so no
-                // stale data from the previous user persists
-                if (!session) {
+                if (session?.access_token) {
+                    setupUser(session.access_token).then((p) => {
+                        setProfile(p);
+                        setIsLoading(false);
+                    });
+                } else {
+                    setProfile(null);
+                    setIsLoading(false);
+                    // When user logs out, clear all TanStack Query cache so no
+                    // stale data from the previous user persists
                     queryClient.clear();
                 }
             },
@@ -94,6 +144,7 @@ function AuthProvider({ children }: { children: ReactNode }) {
         <AuthContext.Provider value={{
             session,
             user: session?.user ?? null,
+            profile,
             isLoading,
             isAuthenticated: !!session,
         }}>

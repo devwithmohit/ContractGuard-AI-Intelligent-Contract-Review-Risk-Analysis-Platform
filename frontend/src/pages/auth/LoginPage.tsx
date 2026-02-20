@@ -9,7 +9,6 @@
  * Design: full-screen dark layout, glassmorphic card, brand gradient accents.
  */
 import { useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     ShieldCheck,
@@ -28,6 +27,7 @@ import { cn } from '@/lib/utils';
 // ─── Types ────────────────────────────────────────────────────
 
 type AuthMode = 'password' | 'magic-link';
+type AuthTab = 'sign-in' | 'sign-up';
 
 // ─── Animated background orbs ────────────────────────────────
 
@@ -56,20 +56,39 @@ const FEATURES = [
 // ─── Component ────────────────────────────────────────────────
 
 export default function LoginPage() {
-    const { signInWithPassword, signInWithMagicLink, signInWithGoogle, isPending } = useAuth();
+    const { signInWithPassword, signInWithMagicLink, signInWithGoogle, signUp, isPending } = useAuth();
 
     // Form state
+    const [authTab, setAuthTab] = useState<AuthTab>('sign-in');
     const [mode, setMode] = useState<AuthMode>('password');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [magicLinkSent, setMagicLinkSent] = useState(false);
+    const [signUpSuccess, setSignUpSuccess] = useState(false);
 
     // ── Form submit ───────────────────────────────────────────
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault();
         if (isPending) return;
+
+        if (authTab === 'sign-up') {
+            if (password !== confirmPassword) {
+                const toast = (await import('react-hot-toast')).default;
+                toast.error('Passwords do not match.');
+                return;
+            }
+            if (password.length < 6) {
+                const toast = (await import('react-hot-toast')).default;
+                toast.error('Password must be at least 6 characters.');
+                return;
+            }
+            await signUp(email, password);
+            setSignUpSuccess(true);
+            return;
+        }
 
         if (mode === 'password') {
             await signInWithPassword(email, password);
@@ -80,6 +99,45 @@ export default function LoginPage() {
     }
 
     // ── Magic link sent confirmation view ─────────────────────
+
+    if (signUpSuccess) {
+        return (
+            <div className="relative flex h-dvh flex-col items-center justify-center bg-surface px-4">
+                <BackgroundOrbs />
+
+                <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="relative z-10 w-full max-w-sm text-center"
+                >
+                    <div className="mb-6 flex justify-center">
+                        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-green-500/10 ring-1 ring-green-500/30">
+                            <CheckCircle2 className="h-8 w-8 text-green-400" />
+                        </div>
+                    </div>
+
+                    <h1 className="mb-2 text-2xl font-bold text-content-primary">
+                        Account created!
+                    </h1>
+                    <p className="mb-1 text-sm text-content-secondary">
+                        We sent a verification link to
+                    </p>
+                    <p className="mb-6 text-sm font-semibold text-brand-400">{email}</p>
+                    <p className="text-xs text-content-muted">
+                        Please verify your email, then come back to sign in.
+                    </p>
+
+                    <button
+                        type="button"
+                        onClick={() => { setSignUpSuccess(false); setAuthTab('sign-in'); }}
+                        className="mt-8 text-sm text-brand-400 hover:text-brand-300 underline underline-offset-2 transition-colors"
+                    >
+                        ← Back to sign in
+                    </button>
+                </motion.div>
+            </div>
+        );
+    }
 
     if (magicLinkSent) {
         return (
@@ -142,11 +200,35 @@ export default function LoginPage() {
                 {/* Heading */}
                 <div className="mb-8 self-start">
                     <h1 className="text-3xl font-bold text-content-primary">
-                        Welcome back
+                        {authTab === 'sign-in' ? 'Welcome back' : 'Create your account'}
                     </h1>
                     <p className="mt-2 text-sm text-content-secondary">
-                        Sign in to review and manage your contracts.
+                        {authTab === 'sign-in'
+                            ? 'Sign in to review and manage your contracts.'
+                            : 'Get started with AI-powered contract analysis.'}
                     </p>
+                </div>
+
+                {/* Sign-in / Sign-up tabs */}
+                <div className="mb-6 w-full max-w-sm flex rounded-xl border border-surface-border bg-surface-elevated p-1 gap-1">
+                    {([
+                        { key: 'sign-in', label: 'Sign In' },
+                        { key: 'sign-up', label: 'Sign Up' },
+                    ] as const).map(({ key, label }) => (
+                        <button
+                            key={key}
+                            type="button"
+                            onClick={() => setAuthTab(key)}
+                            className={cn(
+                                'flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-150',
+                                authTab === key
+                                    ? 'bg-surface-card text-content-primary shadow-sm'
+                                    : 'text-content-muted hover:text-content-secondary',
+                            )}
+                        >
+                            {label}
+                        </button>
+                    ))}
                 </div>
 
                 {/* Card */}
@@ -172,11 +254,14 @@ export default function LoginPage() {
                     {/* Divider */}
                     <div className="relative my-6 flex items-center gap-3">
                         <div className="h-px flex-1 bg-surface-border" />
-                        <span className="text-xs text-content-muted">or sign in with email</span>
+                        <span className="text-xs text-content-muted">
+                            {authTab === 'sign-in' ? 'or sign in with email' : 'or sign up with email'}
+                        </span>
                         <div className="h-px flex-1 bg-surface-border" />
                     </div>
 
-                    {/* Mode toggle */}
+                    {/* Mode toggle — only show for sign in */}
+                    {authTab === 'sign-in' && (
                     <div className="mb-6 flex rounded-xl border border-surface-border bg-surface-elevated p-1 gap-1">
                         {([
                             { key: 'password', label: 'Password' },
@@ -198,6 +283,7 @@ export default function LoginPage() {
                             </button>
                         ))}
                     </div>
+                    )}
 
                     {/* Form */}
                     <form id="login-form" onSubmit={(e) => void handleSubmit(e)} noValidate>
@@ -226,9 +312,9 @@ export default function LoginPage() {
                                 </div>
                             </div>
 
-                            {/* Password field — only in password mode */}
+                            {/* Password field — shown in password mode (sign-in) or sign-up */}
                             <AnimatePresence initial={false}>
-                                {mode === 'password' && (
+                                {(authTab === 'sign-up' || mode === 'password') && (
                                     <motion.div
                                         key="password-field"
                                         initial={{ opacity: 0, height: 0 }}
@@ -248,8 +334,8 @@ export default function LoginPage() {
                                             <input
                                                 id="login-password"
                                                 type={showPassword ? 'text' : 'password'}
-                                                autoComplete="current-password"
-                                                required={mode === 'password'}
+                                                autoComplete={authTab === 'sign-up' ? 'new-password' : 'current-password'}
+                                                required={authTab === 'sign-up' || mode === 'password'}
                                                 value={password}
                                                 onChange={(e) => setPassword(e.target.value)}
                                                 placeholder="••••••••"
@@ -274,9 +360,44 @@ export default function LoginPage() {
                                 )}
                             </AnimatePresence>
 
+                            {/* Confirm password — only for sign-up */}
+                            <AnimatePresence initial={false}>
+                                {authTab === 'sign-up' && (
+                                    <motion.div
+                                        key="confirm-password-field"
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: 'auto' }}
+                                        exit={{ opacity: 0, height: 0 }}
+                                        transition={{ duration: 0.18, ease: 'easeInOut' }}
+                                        className="overflow-hidden"
+                                    >
+                                        <label
+                                            htmlFor="login-confirm-password"
+                                            className="mb-1.5 block text-xs font-medium text-content-secondary"
+                                        >
+                                            Confirm password
+                                        </label>
+                                        <div className="relative">
+                                            <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-content-muted pointer-events-none" />
+                                            <input
+                                                id="login-confirm-password"
+                                                type={showPassword ? 'text' : 'password'}
+                                                autoComplete="new-password"
+                                                required
+                                                value={confirmPassword}
+                                                onChange={(e) => setConfirmPassword(e.target.value)}
+                                                placeholder="••••••••"
+                                                className="input w-full pl-10 pr-4"
+                                                disabled={isPending}
+                                            />
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+
                             {/* Magic link helper text */}
                             <AnimatePresence initial={false}>
-                                {mode === 'magic-link' && (
+                                {authTab === 'sign-in' && mode === 'magic-link' && (
                                     <motion.p
                                         key="magic-link-hint"
                                         initial={{ opacity: 0 }}
@@ -304,11 +425,11 @@ export default function LoginPage() {
                             {isPending ? (
                                 <>
                                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                                    {mode === 'password' ? 'Signing in…' : 'Sending link…'}
+                                    {authTab === 'sign-up' ? 'Creating account…' : mode === 'password' ? 'Signing in…' : 'Sending link…'}
                                 </>
                             ) : (
                                 <>
-                                    {mode === 'password' ? 'Sign in' : 'Send magic link'}
+                                    {authTab === 'sign-up' ? 'Create account' : mode === 'password' ? 'Sign in' : 'Send magic link'}
                                     <ArrowRight className="h-4 w-4" />
                                 </>
                             )}
@@ -317,13 +438,29 @@ export default function LoginPage() {
 
                     {/* Footer */}
                     <p className="mt-6 text-center text-xs text-content-muted">
-                        Don't have an account?{' '}
-                        <Link
-                            to="/auth/login"
-                            className="text-brand-400 hover:text-brand-300 underline underline-offset-2 transition-colors"
-                        >
-                            Contact your admin
-                        </Link>
+                        {authTab === 'sign-in' ? (
+                            <>
+                                Don't have an account?{' '}
+                                <button
+                                    type="button"
+                                    onClick={() => setAuthTab('sign-up')}
+                                    className="text-brand-400 hover:text-brand-300 underline underline-offset-2 transition-colors"
+                                >
+                                    Sign up free
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                Already have an account?{' '}
+                                <button
+                                    type="button"
+                                    onClick={() => setAuthTab('sign-in')}
+                                    className="text-brand-400 hover:text-brand-300 underline underline-offset-2 transition-colors"
+                                >
+                                    Sign in
+                                </button>
+                            </>
+                        )}
                     </p>
                 </div>
             </div>

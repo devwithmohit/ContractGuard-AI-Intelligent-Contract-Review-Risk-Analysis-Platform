@@ -30,6 +30,7 @@ export interface UseAuthReturn {
 
     // Actions (loading state per-action)
     isPending: boolean;
+    signUp: (email: string, password: string) => Promise<void>;
     signInWithPassword: (email: string, password: string) => Promise<void>;
     signInWithMagicLink: (email: string) => Promise<void>;
     signInWithGoogle: () => Promise<void>;
@@ -42,6 +43,44 @@ export function useAuth(): UseAuthReturn {
     const { session, user, isLoading, isAuthenticated } = useAuthContext();
     const navigate = useNavigate();
     const [isPending, setIsPending] = useState(false);
+
+    // ── Sign up (email + password) ───────────────────────────
+
+    async function signUp(email: string, password: string): Promise<void> {
+        setIsPending(true);
+        try {
+            // Call our backend signup endpoint which sends confirmation
+            // email via Resend instead of Supabase's built-in email.
+            const res = await fetch(
+                `${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''}/api/v1/auth/signup`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password }),
+                },
+            );
+
+            if (!res.ok) {
+                const body = await res.json().catch(() => null) as { error?: { detail?: string } } | null;
+                const detail = body?.error?.detail ?? `Signup failed (${res.status})`;
+
+                if (res.status === 409) {
+                    toast.error('This email is already registered. Try signing in instead.');
+                } else {
+                    toast.error(detail);
+                }
+                return;
+            }
+
+            toast.success('Account created! Check your email to verify, then sign in.', {
+                duration: 8000,
+            });
+        } catch {
+            toast.error('An unexpected error occurred. Please try again.');
+        } finally {
+            setIsPending(false);
+        }
+    }
 
     // ── Email + password ──────────────────────────────────────
 
@@ -157,6 +196,7 @@ export function useAuth(): UseAuthReturn {
         isLoading,
         isAuthenticated,
         isPending,
+        signUp,
         signInWithPassword,
         signInWithMagicLink,
         signInWithGoogle,
