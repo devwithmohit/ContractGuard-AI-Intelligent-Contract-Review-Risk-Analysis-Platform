@@ -5,16 +5,17 @@
  *
  * Route structure:
  *
- *   /auth/login           → LoginPage        (public)
+ *   /                     → LandingPage     (public)
+ *   /auth/login           → LoginPage        (public, redirect if auth'd)
  *   /auth/callback        → CallbackPage     (public — OAuth / magic-link)
- *   /                     → AppShell         (auth-guarded layout)
- *     index               → redirect → /dashboard
- *     /dashboard          → DashboardPage
- *     /contracts          → ContractListPage
- *     /contracts/:id      → ContractDetailPage
- *     /contracts/upload   → UploadPage
- *     /search             → SearchPage
- *     /alerts             → AlertsPage
+ *   /dashboard            → DashboardPage    (auth-guarded, AppShell)
+ *   /contracts            → ContractListPage
+ *   /contracts/:id        → ContractDetailPage
+ *   /contracts/upload     → UploadPage
+ *   /search               → SearchPage
+ *   /alerts               → AlertsPage
+ *   /settings             → SettingsPage
+ *   /team                 → TeamPage
  *   *                     → NotFoundPage
  */
 import {
@@ -31,6 +32,7 @@ import PageLoader from '@/components/shared/PageLoader';
 // ─── Lazy page imports ────────────────────────────────────────
 // Each page is code-split into its own chunk for fast initial load.
 
+const LandingPage = lazy(() => import('@/pages/LandingPage'));
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'));
 const CallbackPage = lazy(() => import('@/pages/auth/CallbackPage'));
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
@@ -93,6 +95,16 @@ function SuspensePage({ children }: { children: React.ReactNode }) {
 // ─── Router ───────────────────────────────────────────────────
 
 const router = createBrowserRouter([
+    // ── Public landing page ───────────────────────────────────
+    {
+        path: '/',
+        element: (
+            <SuspensePage>
+                <LandingPage />
+            </SuspensePage>
+        ),
+    },
+
     // ── Auth routes (public, redirect if already logged in) ───
     {
         element: <GuestGuard />,
@@ -125,12 +137,6 @@ const router = createBrowserRouter([
             {
                 element: <AppShell />,
                 children: [
-                    // Root → redirect to dashboard
-                    {
-                        index: true,
-                        path: '/',
-                        element: <Navigate to="/dashboard" replace />,
-                    },
 
                     // Dashboard
                     {
