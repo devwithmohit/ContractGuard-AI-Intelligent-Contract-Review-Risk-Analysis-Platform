@@ -49,12 +49,18 @@ export default async function semanticSearchRoute(fastify: FastifyInstance) {
             throw new ValidationError('"minScore" must be a number between 0 and 1');
         }
 
+        // Parse optional contractTypes filter
+        const contractTypes = Array.isArray(body['contractTypes'])
+            ? (body['contractTypes'] as string[]).filter((t) => typeof t === 'string')
+            : undefined;
+
         // ── Search ──────────────────────────────────────────
         const results = await semanticSearch({
             query: query.trim(),
             orgId: request.user.orgId!,
             limit: Math.floor(limit),
             minScore,
+            contractTypes,
         });
 
         return reply.send(results);

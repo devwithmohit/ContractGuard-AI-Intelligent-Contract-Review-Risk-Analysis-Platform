@@ -85,6 +85,7 @@ async function setupUser(accessToken: string): Promise<UserProfile | null> {
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json',
             },
+            body: '{}',
         });
 
         if (!response.ok) return null;

@@ -63,22 +63,24 @@ export async function extractClauses(contractText: string): Promise<ExtractedCla
     const windows = splitIntoWindows(contractText, MAX_EXTRACT_CHARS, CHUNK_OVERLAP_CHARS);
     log.debug({ windowCount: windows.length }, 'Processing contract windows');
 
-    const allClauses: ExtractedClause[] = [];
-
-    for (let i = 0; i < windows.length; i++) {
-        const window = windows[i]!;
+    // Process all windows in parallel for speed
+    // (each hits Groq API independently — no contention)
+    const windowPromises = windows.map((window, i) => {
         const prompt = buildClauseExtractionPrompt(window);
+        return callLlm(prompt, 'groq')
+            .then((raw) => {
+                const parsed = parseJsonResponse(raw, ClauseArraySchema);
+                log.debug({ window: i + 1, clausesFound: parsed.length }, 'Window processed');
+                return parsed;
+            })
+            .catch((err) => {
+                log.error({ err, window: i + 1 }, 'Clause extraction failed for window');
+                return [] as ExtractedClause[]; // Continue with other windows
+            });
+    });
 
-        try {
-            const raw = await callLlm(prompt, 'groq');
-            const parsed = parseJsonResponse(raw, ClauseArraySchema);
-            allClauses.push(...parsed);
-            log.debug({ window: i + 1, clausesFound: parsed.length }, 'Window processed');
-        } catch (err) {
-            log.error({ err, window: i + 1 }, 'Clause extraction failed for window');
-            // Continue with next window rather than failing entirely
-        }
-    }
+    const windowResults = await Promise.all(windowPromises);
+    const allClauses: ExtractedClause[] = windowResults.flat();
 
     // Deduplicate clauses by type (keep the one with highest risk level)
     const deduped = deduplicateClauses(allClauses);
@@ -173,7 +175,7 @@ async function callGroqModel(prompt: string, model: string): Promise<string> {
             max_tokens: 4096,
             response_format: { type: 'json_object' },
         }),
-        signal: AbortSignal.timeout(60_000), // 60s timeout
+        signal: AbortSignal.timeout(20_000), // 20s timeout (llama responds in 1-5s)
     });
 
     if (!response.ok) {

@@ -10,6 +10,8 @@
  *   GET    /api/v1/contracts/:id
  *   POST   /api/v1/contracts/:id/analyze
  *   PATCH  /api/v1/contracts/:id/archive
+ *   PATCH  /api/v1/contracts/:id/unarchive
+ *   DELETE /api/v1/contracts/:id
  *   GET    /api/v1/contracts/:id/risks
  *
  *   POST   /api/v1/search/semantic
@@ -32,6 +34,8 @@ import listRoute from './contracts/list.route.js';
 import detailRoute from './contracts/detail.route.js';
 import analyzeRoute from './contracts/analyze.route.js';
 import archiveRoute from './contracts/archive.route.js';
+import unarchiveRoute from './contracts/unarchive.route.js';
+import deleteContractRoute from './contracts/delete.route.js';
 import risksRoute from './contracts/risks.route.js';
 
 // Search routes
@@ -62,6 +66,8 @@ export default async function v1Routes(fastify: FastifyInstance) {
     await fastify.register(detailRoute);
     await fastify.register(analyzeRoute);
     await fastify.register(archiveRoute);
+    await fastify.register(unarchiveRoute);
+    await fastify.register(deleteContractRoute);
     await fastify.register(risksRoute);
 
     // ── Search ─────────────────────────────────────────────

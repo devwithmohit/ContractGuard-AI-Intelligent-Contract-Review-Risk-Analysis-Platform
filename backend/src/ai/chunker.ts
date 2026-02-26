@@ -26,7 +26,12 @@ interface TiktokenEncoder {
     free: () => void;
 }
 
+// Singleton cache — avoids reloading tiktoken on every call
+let _cachedEncoder: TiktokenEncoder | null = null;
+
 async function loadEncoder(): Promise<TiktokenEncoder> {
+    if (_cachedEncoder) return _cachedEncoder;
+
     // tiktoken v1.x exports get_encoding (not getEncoding)
     const tiktoken = await import('tiktoken').catch(() => {
         throw new Error('tiktoken is required. Run: bun add tiktoken');
@@ -40,7 +45,8 @@ async function loadEncoder(): Promise<TiktokenEncoder> {
         throw new Error('tiktoken: could not find get_encoding or getEncoding export');
     }
 
-    return (getEnc as (enc: string) => TiktokenEncoder)(ENCODING_MODEL);
+    _cachedEncoder = (getEnc as (enc: string) => TiktokenEncoder)(ENCODING_MODEL);
+    return _cachedEncoder;
 }
 
 // ─── Main Entry Point ─────────────────────────────────────────
@@ -64,61 +70,58 @@ export async function chunkText(text: string): Promise<TextChunk[]> {
 
     const enc = await loadEncoder();
 
-    try {
-        const sentences = splitIntoSentences(text);
-        const chunks: TextChunk[] = [];
+    // No try/finally with enc.free() — encoder is cached as singleton
+    const sentences = splitIntoSentences(text);
+    const chunks: TextChunk[] = [];
 
-        let currentSentences: string[] = [];
-        let currentTokens: number[] = [];
-        let chunkIndex = 0;
+    let currentSentences: string[] = [];
+    let currentTokens: number[] = [];
+    let chunkIndex = 0;
 
-        // encode() returns Uint32Array — convert to number[] for consistent typing
-        const getTokens = (s: string): number[] => Array.from(enc.encode(s)) as number[];
-        const tokenCount = (toks: number[]): number => toks.length;
+    // encode() returns Uint32Array — convert to number[] for consistent typing
+    const getTokens = (s: string): number[] => Array.from(enc.encode(s)) as number[];
+    const tokenCount = (toks: number[]): number => toks.length;
 
-        for (const sentence of sentences) {
-            const sentenceTokens: number[] = getTokens(sentence);
+    for (const sentence of sentences) {
+        const sentenceTokens: number[] = getTokens(sentence);
 
-            // If adding this sentence would exceed limit, flush current chunk
-            if (
-                currentTokens.length > 0 &&
-                tokenCount(currentTokens) + sentenceTokens.length > CHUNK_TOKEN_SIZE
-            ) {
-                // Create chunk from current accumulation
-                const chunkText = currentSentences.join(' ').trim();
-                if (chunkText) {
-                    chunks.push(makeChunk(chunkText, chunkIndex++, tokenCount(currentTokens)));
-                }
-
-                // Build overlap: take last N tokens worth of sentences
-                const { sentences: overlapSentences, tokens: overlapTokens } =
-                    buildOverlap(currentSentences, enc, OVERLAP_TOKENS);
-
-                currentSentences = [...overlapSentences, sentence];
-                currentTokens = [...overlapTokens, ...sentenceTokens];
-            } else {
-                currentSentences.push(sentence);
-                currentTokens.push(...sentenceTokens);
-            }
-        }
-
-        // Flush the last chunk
-        if (currentSentences.length > 0) {
+        // If adding this sentence would exceed limit, flush current chunk
+        if (
+            currentTokens.length > 0 &&
+            tokenCount(currentTokens) + sentenceTokens.length > CHUNK_TOKEN_SIZE
+        ) {
+            // Create chunk from current accumulation
             const chunkText = currentSentences.join(' ').trim();
             if (chunkText) {
                 chunks.push(makeChunk(chunkText, chunkIndex++, tokenCount(currentTokens)));
             }
+
+            // Build overlap: take last N tokens worth of sentences
+            const { sentences: overlapSentences, tokens: overlapTokens } =
+                buildOverlap(currentSentences, enc, OVERLAP_TOKENS);
+
+            currentSentences = [...overlapSentences, sentence];
+            currentTokens = [...overlapTokens, ...sentenceTokens];
+        } else {
+            currentSentences.push(sentence);
+            currentTokens.push(...sentenceTokens);
         }
-
-        log.info(
-            { chunkCount: chunks.length, avgTokens: Math.round(currentTokens.length / Math.max(chunks.length, 1)) },
-            'Chunking complete',
-        );
-
-        return chunks;
-    } finally {
-        enc.free();
     }
+
+    // Flush the last chunk
+    if (currentSentences.length > 0) {
+        const chunkText = currentSentences.join(' ').trim();
+        if (chunkText) {
+            chunks.push(makeChunk(chunkText, chunkIndex++, tokenCount(currentTokens)));
+        }
+    }
+
+    log.info(
+        { chunkCount: chunks.length, avgTokens: Math.round(currentTokens.length / Math.max(chunks.length, 1)) },
+        'Chunking complete',
+    );
+
+    return chunks;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -177,9 +180,5 @@ function makeChunk(text: string, index: number, tokenCount: number): TextChunk {
  */
 export async function countTokens(text: string): Promise<number> {
     const enc = await loadEncoder();
-    try {
-        return enc.encode(text).length;
-    } finally {
-        enc.free();
-    }
+    return enc.encode(text).length;
 }

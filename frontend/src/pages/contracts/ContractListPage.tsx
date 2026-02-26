@@ -42,6 +42,13 @@ const TYPE_OPTIONS: { value: ContractType; label: string }[] = [
     { value: 'Other', label: 'Other' },
 ];
 
+const RISK_OPTIONS: { value: string; label: string }[] = [
+    { value: '0-25', label: 'Low (0–25)' },
+    { value: '26-50', label: 'Medium (26–50)' },
+    { value: '51-75', label: 'High (51–75)' },
+    { value: '76-100', label: 'Critical (76–100)' },
+];
+
 const SORT_OPTIONS = [
     { value: 'created_at', label: 'Date Added' },
     { value: 'risk_score', label: 'Risk Score' },
@@ -84,14 +91,21 @@ export default function ContractListPage() {
     const [search, setSearch] = useState('');
     const [status, setStatus] = useState<ContractStatus | ''>('');
     const [type, setType] = useState<ContractType | ''>('');
+    const [riskRange, setRiskRange] = useState('');  // e.g. '26-50'
     const [sort, setSort] = useState<ContractListFilters['sort']>('created_at');
     const [order, setOrder] = useState<'asc' | 'desc'>('desc');
     const [page, setPage] = useState(1);
+
+    // Parse risk range into min/max
+    const riskMin = riskRange ? parseInt(riskRange.split('-')[0]!, 10) : undefined;
+    const riskMax = riskRange ? parseInt(riskRange.split('-')[1]!, 10) : undefined;
 
     const filters: ContractListFilters = {
         ...(search && { search }),
         ...(status && { status }),
         ...(type && { type }),
+        ...(riskMin !== undefined && { risk_min: riskMin }),
+        ...(riskMax !== undefined && { risk_max: riskMax }),
         sort,
         order,
         page,
@@ -101,12 +115,13 @@ export default function ContractListPage() {
     const { data, isLoading, isError, refetch } = useContractList(filters);
     const contracts = data?.data ?? [];
     const pagination = data?.pagination;
-    const hasFilters = !!(search || status || type);
+    const hasFilters = !!(search || status || type || riskRange);
 
     function clearFilters() {
         setSearch('');
         setStatus('');
         setType('');
+        setRiskRange('');
         setPage(1);
     }
 
@@ -220,6 +235,19 @@ export default function ContractListPage() {
                             >
                                 <option value="">All Types</option>
                                 {TYPE_OPTIONS.map((o) => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                ))}
+                            </select>
+
+                            {/* Risk */}
+                            <select
+                                id="filter-risk"
+                                value={riskRange}
+                                onChange={(e) => { setRiskRange(e.target.value); setPage(1); }}
+                                className="input w-auto text-sm"
+                            >
+                                <option value="">All Risk Levels</option>
+                                {RISK_OPTIONS.map((o) => (
                                     <option key={o.value} value={o.value}>{o.label}</option>
                                 ))}
                             </select>

@@ -14,7 +14,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { queryKeys } from '@/lib/queryKeys';
-import { apiGet, apiPost, apiPatch, ApiError } from '@/lib/api';
+import { apiGet, apiPost, apiPatch, apiDelete, ApiError } from '@/lib/api';
 import type {
     ContractListFilters,
     ContractListResponse,
@@ -126,6 +126,40 @@ export function useArchiveContract() {
                 error instanceof ApiError
                     ? error.detail
                     : 'Failed to archive contract. Please try again.';
+            toast.error(msg);
+        },
+    });
+}
+
+// ── Delete mutation ────────────────────────────────────────────
+
+export function useDeleteContract() {
+    const queryClient = useQueryClient();
+    const navigate = useNavigate();
+
+    return useMutation({
+        mutationFn: (contractId: string) =>
+            apiDelete(`api/v1/contracts/${contractId}`),
+
+        onSuccess: (_data, contractId) => {
+            toast.success('Contract permanently deleted.');
+            queryClient.removeQueries({
+                queryKey: queryKeys.contracts.detail(contractId),
+            });
+            void queryClient.invalidateQueries({
+                queryKey: queryKeys.contracts.lists(),
+            });
+            void queryClient.invalidateQueries({
+                queryKey: queryKeys.dashboard.stats(),
+            });
+            navigate('/contracts', { replace: true });
+        },
+
+        onError: (error: unknown) => {
+            const msg =
+                error instanceof ApiError
+                    ? error.detail
+                    : 'Failed to delete contract. Please try again.';
             toast.error(msg);
         },
     });

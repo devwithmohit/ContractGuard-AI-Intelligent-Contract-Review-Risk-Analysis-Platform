@@ -10,9 +10,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { supabase, getAccessToken } from '@/lib/supabase';
 import { useAuthContext } from '@/app/providers';
 import { cn } from '@/lib/utils';
+
+const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
 
 export default function NotificationBell() {
     const { user, isAuthenticated } = useAuthContext();
@@ -23,13 +25,12 @@ export default function NotificationBell() {
     useEffect(() => {
         if (!isAuthenticated || !user) return;
 
-        // We'll drive the count from the X-Unread-Count header returned by
-        // GET /api/v1/alerts. For now fetch with minimal params.
         async function fetchUnread() {
             try {
-                const res = await fetch('/api/v1/alerts?is_read=false&limit=1', {
+                const token = await getAccessToken();
+                const res = await fetch(`${API_BASE}/api/v1/alerts?is_read=false&limit=1`, {
                     headers: {
-                        Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token ?? ''}`,
+                        ...(token ? { Authorization: `Bearer ${token}` } : {}),
                     },
                 });
                 if (res.ok) {

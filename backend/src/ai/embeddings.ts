@@ -71,7 +71,7 @@ export async function generateEmbeddings(chunks: TextChunk[]): Promise<Embedding
 
         // Small delay between batches to be polite to the API
         if (i + BATCH_SIZE < chunks.length) {
-            await sleep(200);
+            await sleep(50);
         }
     }
 

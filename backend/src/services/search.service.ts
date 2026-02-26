@@ -27,6 +27,8 @@ export interface SemanticSearchInput {
     minScore?: number;
     /** Optional: restrict search to a subset of contract IDs */
     contractIds?: string[];
+    /** Optional: restrict search to specific contract types */
+    contractTypes?: string[];
 }
 
 export interface SearchResult extends EnrichedSearchResult {
@@ -67,6 +69,7 @@ export async function semanticSearch(
         limit = DEFAULT_LIMIT,
         minScore = MIN_SCORE,
         contractIds: restrictToIds,
+        contractTypes,
     } = input;
 
     // ── Validate ──────────────────────────────────────────────
@@ -93,10 +96,15 @@ export async function semanticSearch(
         const { data: contracts } = await listContracts({
             org_id: orgId,
             status: 'active',
-            limit: 1000, // Get all active contracts
+            limit: 1000,
         });
 
-        searchContractIds = contracts.map((c) => c.id);
+        // Filter by contract type if requested
+        const filtered = contractTypes && contractTypes.length > 0
+            ? contracts.filter((c) => contractTypes.includes(c.type))
+            : contracts;
+
+        searchContractIds = filtered.map((c) => c.id);
     }
 
     if (searchContractIds.length === 0) {

@@ -19,8 +19,8 @@ export interface DeepRiskAnalysis {
  */
 export async function analyzeRiskDeep(clauses: ExtractedClause[]): Promise<DeepRiskAnalysis> {
     const models = [
-        process.env.GROQ_RISK_MODEL || 'openai/gpt-oss-120b',
-        'llama-3.1-8b-instant', // Fallback to LLaMA if GPT fails
+        'llama-3.1-8b-instant', // Fast and reliable — try first
+        process.env.GROQ_RISK_MODEL || 'openai/gpt-oss-120b', // Heavier model as fallback
     ];
 
     const apiKey = process.env.GROQ_API_KEY;
@@ -45,7 +45,7 @@ export async function analyzeRiskDeep(clauses: ExtractedClause[]): Promise<DeepR
                     temperature: 0.1,
                     max_tokens: 2000,
                 }),
-                signal: AbortSignal.timeout(60_000),
+                signal: AbortSignal.timeout(20_000), // 20s timeout (llama responds in 1-5s)
             });
 
             if (!response.ok) {

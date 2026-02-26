@@ -51,9 +51,13 @@ async function processContractAnalysis(
 
     log.info({ jobId: job.id, contractId, orgId }, '▶ Starting contract analysis pipeline');
 
+    const pipelineStart = Date.now();
+    const stepTimings: Record<string, number> = {};
+
     const updateProgress = async (step: number, label: string) => {
+        stepTimings[`step${step}`] = Date.now() - pipelineStart;
         await job.updateProgress({ step, label, total: 9 });
-        log.info({ jobId: job.id, contractId, step: `${step}/9`, label }, `Pipeline step`);
+        log.info({ jobId: job.id, contractId, step: `${step}/9`, label, elapsedMs: stepTimings[`step${step}`] }, `Pipeline step`);
     };
 
     // ── Step 1: Mark as processing ────────────────────────────
@@ -88,9 +92,22 @@ async function processContractAnalysis(
 
         log.debug({ contractId, chunkCount: chunks.length }, 'Text chunked');
 
-        // ── Step 5: Generate embeddings ───────────────────────
-        await updateProgress(5, 'Generating semantic embeddings');
-        const embeddingResults = await generateEmbeddings(chunks);
+        // ── Steps 5+6: Embeddings + Clause analysis (parallel) ──
+        await updateProgress(5, 'Generating embeddings & analyzing clauses');
+
+        // Clear any previous clause analysis (for re-analysis)
+        await deleteClausesByContractId(contractId);
+
+        // Run embeddings and clause/date/type extraction in parallel
+        // (embeddings → Jina API, clauses → Groq API — different services, no contention)
+        const [embeddingResults, clauses, dates, detectedType] = await Promise.all([
+            generateEmbeddings(chunks),
+            extractClauses(extraction.text),
+            extractDates(extraction.text),
+            contractType === 'Other' ? detectContractType(extraction.text) : Promise.resolve(null),
+        ]);
+
+        await updateProgress(6, 'Persisting analysis results');
 
         // Persist embeddings to DB
         const embeddingRows = embeddingResults.map((e) => ({
@@ -103,21 +120,7 @@ async function processContractAnalysis(
 
         const insertedCount = await insertEmbeddingsBatch(embeddingRows);
         log.debug({ contractId, insertedCount }, 'Embeddings persisted');
-
-        // ── Step 6: Extract clauses ───────────────────────────
-        await updateProgress(6, 'Analyzing contract clauses');
-
-        // Clear any previous clause analysis (for re-analysis)
-        await deleteClausesByContractId(contractId);
-
-        const clauses = await extractClauses(extraction.text);
         log.debug({ contractId, clauseCount: clauses.length }, 'Clauses extracted');
-
-        // Detect dates + verify/override contract type if 'Other'
-        const [dates, detectedType] = await Promise.all([
-            extractDates(extraction.text),
-            contractType === 'Other' ? detectContractType(extraction.text) : null,
-        ]);
 
         // Persist clauses
         if (clauses.length > 0) {
@@ -133,48 +136,46 @@ async function processContractAnalysis(
             );
         }
 
-        // ── Step 7: Compute risk score ────────────────────────
-        await updateProgress(7, 'Computing risk score');
+        // ── Steps 7+8: Risk score + Summary (parallel) ───────
+        await updateProgress(7, 'Computing risk & generating summary');
 
-        // Algorithmic score from clause weights
+        // Algorithmic score from clause weights (instant — pure computation)
         const risk = computeRiskScore(clauses);
         let finalRiskScore = risk.overallScore;
 
-        // Deep LLM risk analysis — blend 70% algo, 30% LLM
-        try {
-            log.info({ contractId }, 'Starting deep risk analysis via Groq');
-            const deepRisk = await analyzeRiskDeep(clauses);
+        // Run deep risk analysis and summary generation in parallel
+        const [deepRiskResult, summary] = await Promise.all([
+            analyzeRiskDeep(clauses).catch((riskErr) => {
+                log.error(
+                    { contractId, err: riskErr },
+                    'Deep risk analysis failed — using algorithmic score only',
+                );
+                return null;
+            }),
+            generateSummary({
+                contractText: extraction.text,
+                contractType: detectedType?.type ?? contractType,
+                clauses,
+                effectiveDate: dates.effective_date ?? undefined,
+                expirationDate: dates.expiration_date ?? undefined,
+            }),
+        ]);
 
-            finalRiskScore = Math.round(risk.overallScore * 0.7 + deepRisk.risk_score * 0.3);
-
+        if (deepRiskResult) {
+            finalRiskScore = Math.round(risk.overallScore * 0.7 + deepRiskResult.risk_score * 0.3);
             log.info(
                 {
                     contractId,
                     algoScore: risk.overallScore,
-                    llmScore: deepRisk.risk_score,
+                    llmScore: deepRiskResult.risk_score,
                     finalScore: finalRiskScore,
-                    model: process.env.GROQ_RISK_MODEL || 'openai/gpt-oss-120b',
-                    topRisks: deepRisk.top_risks,
+                    topRisks: deepRiskResult.top_risks,
                 },
                 'Blended risk score computed (70% algo + 30% LLM)',
             );
-        } catch (riskErr) {
-            log.error(
-                { contractId, err: riskErr },
-                'Deep risk analysis failed — using algorithmic score only',
-            );
-            // Fall through with algo-only score
         }
 
-        // ── Step 8: Generate summary ──────────────────────────
-        await updateProgress(8, 'Generating executive summary');
-        const summary = await generateSummary({
-            contractText: extraction.text,
-            contractType: detectedType?.type ?? contractType,
-            clauses,
-            effectiveDate: dates.effective_date ?? undefined,
-            expirationDate: dates.expiration_date ?? undefined,
-        });
+        await updateProgress(8, 'Finalizing results');
 
         // ── Step 9: Persist final results & mark active ───────
         await updateProgress(9, 'Finalizing analysis');
@@ -198,6 +199,7 @@ async function processContractAnalysis(
                 clauseCount: clauses.length,
                 embeddingCount: insertedCount,
                 duration: `${((Date.now() - job.timestamp) / 1000).toFixed(1)}s`,
+                stepTimings,
             },
             '✅ Contract analysis pipeline complete',
         );

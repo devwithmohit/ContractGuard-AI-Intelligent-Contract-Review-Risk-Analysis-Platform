@@ -131,6 +131,7 @@ model Alert {
   message       String
   trigger_date  DateTime  @db.Date
   status        String    @default("pending")
+  is_read       Boolean   @default(false)
   snoozed_until DateTime? @db.Date
   created_at    DateTime  @default(now()) @db.Timestamptz()
   updated_at    DateTime  @default(now()) @updatedAt @db.Timestamptz()

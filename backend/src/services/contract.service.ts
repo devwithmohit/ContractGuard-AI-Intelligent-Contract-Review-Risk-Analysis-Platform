@@ -10,6 +10,8 @@ import {
     listContracts,
     updateContractStatus,
     archiveContract,
+    unarchiveContract,
+    deleteContract,
     getDashboardStats,
     getContractsByType,
     getRiskDistribution,
@@ -253,6 +255,66 @@ export async function archiveContractById(
     log.info({ contractId, orgId }, 'Contract archived');
 }
 
+// ── Unarchive ─────────────────────────────────────────────────────
+
+/**
+ * Restore an archived contract back to active status.
+ */
+export async function unarchiveContractById(
+    contractId: string,
+    orgId: string,
+): Promise<void> {
+    const contract = await getContractById(contractId, orgId);
+
+    if (!contract) {
+        throw new NotFoundError('Contract', contractId);
+    }
+
+    if (contract.status !== 'archived') {
+        throw new ConflictError('Only archived contracts can be restored');
+    }
+
+    await unarchiveContract(contractId, orgId);
+
+    await Promise.all([
+        cacheInvalidatePattern(`contracts:list:${orgId}:*`),
+        cacheInvalidatePattern(`dashboard:*:${orgId}`),
+    ]);
+
+    log.info({ contractId, orgId }, 'Contract unarchived');
+}
+
+// ── Delete ───────────────────────────────────────────────────────
+
+/**
+ * Permanently delete a contract and all related data.
+ */
+export async function deleteContractById(
+    contractId: string,
+    orgId: string,
+): Promise<void> {
+    const deleted = await deleteContract(contractId, orgId);
+
+    if (!deleted) {
+        throw new NotFoundError('Contract', contractId);
+    }
+
+    // Delete file from Supabase Storage
+    await deleteFile(deleted.file_path).catch((err) => {
+        log.warn({ err, contractId, filePath: deleted.file_path }, 'Failed to delete file from storage');
+    });
+
+    await Promise.all([
+        cacheInvalidatePattern(`contracts:clauses:${contractId}`),
+        cacheInvalidatePattern(`contracts:risk-breakdown:${contractId}`),
+        cacheInvalidatePattern(`contracts:signed-url:${contractId}`),
+        cacheInvalidatePattern(`contracts:list:${orgId}:*`),
+        cacheInvalidatePattern(`dashboard:*:${orgId}`),
+    ]);
+
+    log.info({ contractId, orgId }, 'Contract permanently deleted');
+}
+
 // ─── Risk Breakdown ───────────────────────────────────────────
 
 /**
@@ -332,6 +394,8 @@ export default {
     getContractDetail,
     reanalyzeContract,
     archiveContractById,
+    unarchiveContractById,
+    deleteContractById,
     getContractRiskBreakdown,
     getDashboardData,
 };

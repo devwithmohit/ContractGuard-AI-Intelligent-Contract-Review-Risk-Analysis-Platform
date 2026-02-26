@@ -97,7 +97,7 @@ async function callSummaryLlm(prompt: string, model: string): Promise<string> {
             temperature: 0.3,
             max_tokens: 512,
         }),
-        signal: AbortSignal.timeout(45_000),
+        signal: AbortSignal.timeout(20_000), // 20s timeout (llama responds in 1-5s)
     });
 
     if (!response.ok) {

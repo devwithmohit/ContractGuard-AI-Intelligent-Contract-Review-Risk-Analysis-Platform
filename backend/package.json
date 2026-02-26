@@ -49,6 +49,7 @@
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.6",
     "@types/jszip": "^3.4.1",
+    "@types/node": "^25.3.0",
     "@types/pdf-parse": "^1.1.4",
     "@types/pg": "^8.11.6",
     "@typescript-eslint/eslint-plugin": "^7.18.0",

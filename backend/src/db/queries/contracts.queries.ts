@@ -264,6 +264,33 @@ export async function archiveContract(
 }
 
 /**
+ * Unarchive a contract (restore to active)
+ */
+export async function unarchiveContract(
+    contractId: string,
+    orgId: string,
+): Promise<void> {
+    await query(
+        `UPDATE contracts SET status = 'active' WHERE id = $1 AND org_id = $2 AND status = 'archived'`,
+        [contractId, orgId],
+    );
+}
+
+/**
+ * Hard-delete a contract and all related data (CASCADE via DB constraints)
+ */
+export async function deleteContract(
+    contractId: string,
+    orgId: string,
+): Promise<{ file_path: string } | null> {
+    const result = await query<{ file_path: string }>(
+        `DELETE FROM contracts WHERE id = $1 AND org_id = $2 RETURNING file_path`,
+        [contractId, orgId],
+    );
+    return result.rows[0] ?? null;
+}
+
+/**
  * Count contracts by org (for tier limit checks)
  */
 export async function countOrgContracts(orgId: string): Promise<number> {

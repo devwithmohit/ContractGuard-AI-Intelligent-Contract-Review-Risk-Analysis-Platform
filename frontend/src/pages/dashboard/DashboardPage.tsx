@@ -58,13 +58,13 @@ function useRecentContracts() {
         queryKey: queryKeys.contracts.list({
             sort: 'created_at',
             order: 'desc',
-            limit: 10,
+            limit: 200,
         }),
         queryFn: () =>
             apiGet<ContractListResponse>('api/v1/contracts', {
                 sort: 'created_at',
                 order: 'desc',
-                limit: 10,
+                limit: 200,
             }),
     });
 }

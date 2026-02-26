@@ -27,6 +27,7 @@ import {
     AlertTriangle,
     CheckCircle2,
     Loader2,
+    Trash2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
@@ -35,6 +36,7 @@ import {
     useContractRisks,
     useReanalyzeContract,
     useArchiveContract,
+    useDeleteContract,
 } from '@/hooks/useContracts';
 import PDFViewer from '@/components/contract/PDFViewer';
 import RiskScore from '@/components/contract/RiskScore';
@@ -112,6 +114,7 @@ export default function ContractDetailPage() {
     const risksQuery = useContractRisks(id);
     const reanalyzeMutation = useReanalyzeContract();
     const archiveMutation = useArchiveContract();
+    const deleteMutation = useDeleteContract();
 
     const contract = detailQuery.data;
     const risks = risksQuery.data;
@@ -204,6 +207,30 @@ export default function ContractDetailPage() {
                                 : <Archive className="h-3.5 w-3.5" />
                             }
                             <span className="hidden sm:inline">Archive</span>
+                        </button>
+
+                        <button
+                            id="contract-delete-btn"
+                            type="button"
+                            onClick={() => {
+                                const name = contract.name;
+                                const typed = window.prompt(
+                                    `This action cannot be undone. Type "${name}" to confirm deletion.`,
+                                );
+                                if (typed === name) {
+                                    deleteMutation.mutate(contract.id);
+                                } else if (typed !== null) {
+                                    window.alert('Contract name did not match. Deletion cancelled.');
+                                }
+                            }}
+                            disabled={deleteMutation.isPending}
+                            className="flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {deleteMutation.isPending
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <Trash2 className="h-3.5 w-3.5" />
+                            }
+                            <span className="hidden sm:inline">Delete</span>
                         </button>
                     </div>
                 )}
