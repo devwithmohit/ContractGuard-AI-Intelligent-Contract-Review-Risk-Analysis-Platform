@@ -1,4 +1,5 @@
 import { createLogger } from '../lib/logger.js';
+import { fetchWithTimeout } from '../lib/timeout.js';
 import { buildSummaryPrompt, type ExtractedClause, type SummaryInput } from './prompts.js';
 
 const log = createLogger('ai.summarizer');
@@ -79,26 +80,29 @@ async function callSummaryLlm(prompt: string, model: string): Promise<string> {
         throw new Error('GROQ_API_KEY is not set');
     }
 
-    const response = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
+    const response = await fetchWithTimeout(
+        GROQ_API_URL,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are a contract summarization assistant. Write clear, concise summaries for business owners. No legal jargon. No markdown.',
+                    },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.3,
+                max_tokens: 512,
+            }),
         },
-        body: JSON.stringify({
-            model,
-            messages: [
-                {
-                    role: 'system',
-                    content: 'You are a contract summarization assistant. Write clear, concise summaries for business owners. No legal jargon. No markdown.',
-                },
-                { role: 'user', content: prompt },
-            ],
-            temperature: 0.3,
-            max_tokens: 512,
-        }),
-        signal: AbortSignal.timeout(20_000), // 20s timeout (llama responds in 1-5s)
-    });
+        20_000, // 20s — reliable setTimeout-based timeout
+    );
 
     if (!response.ok) {
         const body = await response.text();

@@ -14,12 +14,16 @@ export interface ExtractionResult {
 // Minimum word count before we consider extraction successful
 const MIN_WORD_COUNT = 50;
 
+// Hard timeout for any extraction attempt (ms)
+const EXTRACTION_TIMEOUT_MS = 60_000; // 60s max for entire extraction
+
 // ─── Main Entry Point ─────────────────────────────────────────
 
 /**
  * Extract raw text from a contract file (PDF or DOCX).
- * For PDFs: tries digital extraction first, falls back to OCR.
+ * For PDFs: tries digital extraction first, falls back to binary text recovery.
  * For DOCX: extracts XML content directly.
+ * All paths are wrapped with hard timeouts (setTimeout-based, not AbortSignal).
  *
  * @param buffer   - Raw file buffer
  * @param fileType - 'pdf' or 'docx'
@@ -31,47 +35,49 @@ export async function extractText(
     log.info({ fileType, size: buffer.length }, 'Starting text extraction');
 
     if (fileType === 'docx') {
-        return extractFromDocx(buffer);
+        return withTimeout(extractFromDocx(buffer), EXTRACTION_TIMEOUT_MS, 'DOCX extraction');
     }
 
-    // PDF: try digital first, then OCR fallback
-    return extractFromPdf(buffer);
+    return withTimeout(extractFromPdf(buffer), EXTRACTION_TIMEOUT_MS, 'PDF extraction');
 }
 
 // ─── PDF Extraction ──────────────────────────────────────────
 
 async function extractFromPdf(buffer: Buffer): Promise<ExtractionResult> {
-    // Try digital PDF extraction
+    // Try digital PDF extraction with its own sub-timeout
     try {
-        const result = await extractPdfDigital(buffer);
+        const result = await withTimeout(
+            extractPdfDigital(buffer),
+            30_000,
+            'Digital PDF extraction',
+        );
+
         if (result.wordCount >= MIN_WORD_COUNT) {
-            log.info({ pageCount: result.pageCount, wordCount: result.wordCount }, 'Digital PDF extraction successful');
+            log.info(
+                { pageCount: result.pageCount, wordCount: result.wordCount },
+                'Digital PDF extraction successful',
+            );
             return result;
         }
+
         log.warn(
             { wordCount: result.wordCount },
-            `Digital extraction yielded too few words (${result.wordCount}), falling back to OCR`,
+            `Digital extraction yielded too few words (${result.wordCount}), falling back to binary text recovery`,
         );
     } catch (err) {
-        log.warn({ err }, 'Digital PDF extraction failed, falling back to OCR');
+        log.warn({ err }, 'Digital PDF extraction failed or timed out, falling back to binary text recovery');
     }
 
-    // OCR fallback for scanned PDFs
-    return extractPdfOcr(buffer);
+    // Binary text recovery fallback — much safer than Tesseract OCR on raw PDF buffers
+    return withTimeout(extractPdfBinaryRecovery(buffer), 10_000, 'Binary PDF text recovery');
 }
 
 async function extractPdfDigital(buffer: Buffer): Promise<ExtractionResult> {
-    // Dynamic import to avoid loading pdf-parse at startup
+    // pdf-parse does NOT support custom pagerender reliably — use default parsing.
+    // The custom pagerender callback was causing hangs on complex PDFs.
     const pdfParse = await import('pdf-parse').then((m) => m.default ?? m);
 
-    const data = await pdfParse(buffer, {
-        // Preserve page breaks so we can track page numbers
-        pagerender: (pageData: { getTextContent: () => Promise<{ items: Array<{ str: string }> }> }) => {
-            return pageData.getTextContent().then((textContent: { items: Array<{ str: string }> }) => {
-                return textContent.items.map((item: { str: string }) => item.str).join(' ') + '\n\n[PAGE_BREAK]\n\n';
-            });
-        },
-    });
+    const data = await pdfParse(buffer);
 
     const text = cleanText(data.text);
     return {
@@ -82,35 +88,46 @@ async function extractPdfDigital(buffer: Buffer): Promise<ExtractionResult> {
     };
 }
 
-async function extractPdfOcr(buffer: Buffer): Promise<ExtractionResult> {
-    log.info('Starting OCR extraction with Tesseract.js');
+/**
+ * Binary text recovery fallback for PDFs that pdf-parse fails to handle.
+ *
+ * Tesseract.js v5 `recognize()` expects image formats (PNG/JPEG/BMP), NOT raw
+ * PDF buffers. Passing a PDF binary causes it to hang indefinitely. Rather than
+ * pulling in pdf2pic + sharp for PDF→image conversion, we extract text fragments
+ * directly from the PDF binary stream. This works for most digital PDFs that
+ * pdf-parse chokes on (complex fonts, partial encryption, etc).
+ */
+async function extractPdfBinaryRecovery(buffer: Buffer): Promise<ExtractionResult> {
+    log.info('Attempting binary text recovery from PDF stream');
 
-    const { createWorker } = await import('tesseract.js');
-    const worker = await createWorker('eng', 1, {
-        logger: (m) => {
-            if (m.status === 'recognizing text') {
-                log.debug({ progress: Math.round(m.progress * 100) }, 'OCR progress');
-            }
-        },
-    });
+    const rawStr = buffer.toString('latin1');
+    // PDF text streams store text in parenthesized strings: (text here)
+    const textMatches = rawStr.match(/\(([^\)]{2,200})\)/g) ?? [];
+    const recovered = textMatches
+        .map((m) => m.slice(1, -1))
+        .filter((s) => /[a-zA-Z]{3,}/.test(s)) // Only keep strings with actual words
+        .join(' ');
 
-    try {
-        // OCR the PDF buffer directly (Tesseract handles PDF-to-image internally for PNGs,
-        // but for PDFs we pass the buffer directly)
-        const { data: { text } } = await worker.recognize(buffer);
-        const cleaned = cleanText(text);
+    const text = cleanText(recovered);
+    const wordCount = countWords(text);
 
-        log.info({ wordCount: countWords(cleaned) }, 'OCR extraction complete');
+    log.info({ wordCount, recoveredFragments: textMatches.length }, 'Binary PDF text recovery complete');
 
-        return {
-            text: cleaned,
-            pageCount: 1, // Tesseract doesn't give us page count for raw buffer
-            method: 'ocr',
-            wordCount: countWords(cleaned),
-        };
-    } finally {
-        await worker.terminate();
+    // If we recovered nothing, throw so the pipeline marks the contract as errored
+    // rather than hanging or silently storing empty text
+    if (wordCount < MIN_WORD_COUNT) {
+        throw new Error(
+            `Could not extract text from PDF. The file may be a scanned image PDF. ` +
+            `Word count: ${wordCount}. Please ensure the PDF has a text layer.`,
+        );
     }
+
+    return {
+        text,
+        pageCount: 1,
+        method: 'ocr',
+        wordCount,
+    };
 }
 
 // ─── DOCX Extraction ─────────────────────────────────────────
@@ -128,20 +145,14 @@ async function extractFromDocx(buffer: Buffer): Promise<ExtractionResult> {
 
     const xmlContent = await documentXml.async('string');
 
-    // Extract text from <w:t> elements (Word text runs)
-    const textMatches = xmlContent.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) ?? [];
-    const rawText = textMatches
-        .map((match: string) => match.replace(/<[^>]+>/g, ''))
-        .join(' ');
-
-    // Extract paragraph breaks from <w:p> elements
+    // Extract paragraph text preserving structure
     const paragraphText = xmlContent
         .replace(/<w:p[ >]/g, '\n')
         .replace(/<w:t[^>]*>([^<]*)<\/w:t>/g, '$1')
         .replace(/<[^>]+>/g, '')
         .trim();
 
-    const text = cleanText(paragraphText || rawText);
+    const text = cleanText(paragraphText);
 
     log.info({ wordCount: countWords(text) }, 'DOCX extraction complete');
 
@@ -151,6 +162,28 @@ async function extractFromDocx(buffer: Buffer): Promise<ExtractionResult> {
         method: 'digital',
         wordCount: countWords(text),
     };
+}
+
+// ─── Timeout Wrapper ──────────────────────────────────────────
+
+/**
+ * Wraps a promise with a hard timeout using setTimeout + Promise.race.
+ * This is reliable in both Bun and Node — unlike AbortSignal.timeout()
+ * which is not fully implemented in Bun < 1.1.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    let timeoutHandle: ReturnType<typeof setTimeout>;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+            reject(new Error(`${label} timed out after ${ms}ms`));
+        }, ms);
+    });
+
+    return Promise.race([
+        promise.finally(() => clearTimeout(timeoutHandle)),
+        timeoutPromise,
+    ]);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────

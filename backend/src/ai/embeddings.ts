@@ -1,4 +1,5 @@
 import { createLogger } from '../lib/logger.js';
+import { fetchWithTimeout, sleep } from '../lib/timeout.js';
 import type { TextChunk } from './chunker.js';
 
 const log = createLogger('ai.embeddings');
@@ -125,19 +126,22 @@ async function callJinaApi(
     retryCount = 0,
 ): Promise<JinaResponse> {
     try {
-        const response = await fetch(JINA_API_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${apiKey}`,
+        const response = await fetchWithTimeout(
+            JINA_API_URL,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify({
+                    model: JINA_MODEL,
+                    input: inputs,
+                    normalized: true,  // L2-normalize for cosine similarity
+                }),
             },
-            body: JSON.stringify({
-                model: JINA_MODEL,
-                input: inputs,
-                normalized: true,  // L2-normalize for cosine similarity
-            }),
-            signal: AbortSignal.timeout(30_000), // 30s timeout
-        });
+            30_000, // 30s — reliable setTimeout-based timeout
+        );
 
         // Handle rate limits
         if (response.status === 429) {
@@ -186,6 +190,4 @@ function isRetryableError(err: unknown): boolean {
     return false;
 }
 
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// sleep() is imported from '../lib/timeout.js'

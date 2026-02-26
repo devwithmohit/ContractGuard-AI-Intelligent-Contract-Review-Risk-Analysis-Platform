@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { createLogger } from '../lib/logger.js';
+import { fetchWithTimeout, retryWithBackoff } from '../lib/timeout.js';
 import {
     buildClauseExtractionPrompt,
     buildDateExtractionPrompt,
@@ -16,12 +17,13 @@ const log = createLogger('ai.clauseExtractor');
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+const GROQ_PRIMARY_MODEL = process.env.GROQ_MODEL ?? 'llama-3.1-8b-instant';
 const GROQ_FALLBACK_MODEL = 'llama-3.1-8b-instant';
 
 // Max context for clause extraction (keep room for response)
 const MAX_EXTRACT_CHARS = 12_000;
 const CHUNK_OVERLAP_CHARS = 500;
+const API_TIMEOUT_MS = 25_000;  // 25s per Groq call
 
 // ─── Zod Schemas ─────────────────────────────────────────────
 
@@ -48,41 +50,39 @@ const ContractTypeSchema = z.object({
     counterparty: z.string().nullable(),
 });
 
-// ─── Main Entry Point ─────────────────────────────────────────
+// ─── Main Entry Points ────────────────────────────────────────
 
 /**
  * Extract all clauses from a contract using LLaMA 3.1 via Groq.
  * Falls back to a lighter Groq model on failure.
  *
  * For large contracts, splits into overlapping windows and deduplicates results.
+ * Windows are processed in parallel with per-window retry + timeout.
  */
 export async function extractClauses(contractText: string): Promise<ExtractedClause[]> {
     log.info({ textLength: contractText.length }, 'Starting clause extraction');
 
-    // Split into processable windows for large contracts
     const windows = splitIntoWindows(contractText, MAX_EXTRACT_CHARS, CHUNK_OVERLAP_CHARS);
     log.debug({ windowCount: windows.length }, 'Processing contract windows');
 
-    // Process all windows in parallel for speed
-    // (each hits Groq API independently — no contention)
-    const windowPromises = windows.map((window, i) => {
-        const prompt = buildClauseExtractionPrompt(window);
-        return callLlm(prompt, 'groq')
-            .then((raw) => {
-                const parsed = parseJsonResponse(raw, ClauseArraySchema);
-                log.debug({ window: i + 1, clausesFound: parsed.length }, 'Window processed');
-                return parsed;
-            })
-            .catch((err) => {
-                log.error({ err, window: i + 1 }, 'Clause extraction failed for window');
-                return [] as ExtractedClause[]; // Continue with other windows
-            });
-    });
+    // Process windows in parallel — each gets its own timeout + retry
+    const windowPromises = windows.map((windowText, i) =>
+        retryWithBackoff(
+            () => extractClausesFromWindow(windowText),
+            {
+                attempts: 2,
+                baseDelayMs: 2000,
+                timeoutMs: API_TIMEOUT_MS,
+                label: `Clause extraction window ${i + 1}/${windows.length}`,
+            },
+        ).catch((err) => {
+            log.error({ err, window: i + 1 }, 'Clause extraction failed for window — continuing');
+            return [] as ExtractedClause[];
+        }),
+    );
 
     const windowResults = await Promise.all(windowPromises);
     const allClauses: ExtractedClause[] = windowResults.flat();
-
-    // Deduplicate clauses by type (keep the one with highest risk level)
     const deduped = deduplicateClauses(allClauses);
 
     log.info(
@@ -100,7 +100,15 @@ export async function extractDates(contractText: string): Promise<ExtractedDates
     const prompt = buildDateExtractionPrompt(contractText);
 
     try {
-        const raw = await callLlm(prompt, 'groq');
+        const raw = await retryWithBackoff(
+            () => callGroqModel(prompt, GROQ_PRIMARY_MODEL),
+            {
+                attempts: 2,
+                baseDelayMs: 1000,
+                timeoutMs: API_TIMEOUT_MS,
+                label: 'Date extraction',
+            },
+        );
         return parseJsonResponse(raw, DateSchema);
     } catch (err) {
         log.warn({ err }, 'Date extraction failed — returning nulls');
@@ -123,7 +131,15 @@ export async function detectContractType(contractText: string): Promise<{
     const prompt = buildContractTypePrompt(contractText);
 
     try {
-        const raw = await callLlm(prompt, 'groq');
+        const raw = await retryWithBackoff(
+            () => callGroqModel(prompt, GROQ_PRIMARY_MODEL),
+            {
+                attempts: 2,
+                baseDelayMs: 1000,
+                timeoutMs: API_TIMEOUT_MS,
+                label: 'Contract type detection',
+            },
+        );
         const parsed = parseJsonResponse(raw, ContractTypeSchema);
         return { type: parsed.type, counterparty: parsed.counterparty };
     } catch (err) {
@@ -132,51 +148,59 @@ export async function detectContractType(contractText: string): Promise<{
     }
 }
 
-// ─── LLM Caller ──────────────────────────────────────────────
+// ─── Internal: Single Window Extraction ──────────────────────
 
-async function callLlm(
-    prompt: string,
-    model: string = GROQ_MODEL,
-): Promise<string> {
+async function extractClausesFromWindow(windowText: string): Promise<ExtractedClause[]> {
+    const prompt = buildClauseExtractionPrompt(windowText);
+
+    // Try primary model first, fall back if it fails
+    let raw: string;
     try {
-        return await callGroqModel(prompt, model);
+        raw = await callGroqModel(prompt, GROQ_PRIMARY_MODEL);
     } catch (err) {
-        if (model !== GROQ_FALLBACK_MODEL) {
-            log.warn({ err, model }, `Groq model ${model} failed — falling back to ${GROQ_FALLBACK_MODEL}`);
-            return callGroqModel(prompt, GROQ_FALLBACK_MODEL);
-        }
-        throw err;
+        if (GROQ_PRIMARY_MODEL === GROQ_FALLBACK_MODEL) throw err;
+
+        log.warn({ err, model: GROQ_PRIMARY_MODEL }, 'Primary model failed — trying fallback');
+        raw = await callGroqModel(prompt, GROQ_FALLBACK_MODEL);
     }
+
+    const parsed = parseJsonResponse(raw, ClauseArraySchema);
+    log.debug({ clausesFound: parsed.length }, 'Window clauses extracted');
+    return parsed;
 }
+
+// ─── Groq API Caller ─────────────────────────────────────────
 
 async function callGroqModel(prompt: string, model: string): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) throw new Error('GROQ_API_KEY is not set');
 
-    if (!apiKey) {
-        throw new Error('GROQ_API_KEY is not set');
-    }
+    log.debug({ model, promptLength: prompt.length }, 'Calling Groq API');
 
-    const response = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
+    const response = await fetchWithTimeout(
+        GROQ_API_URL,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are a legal contract analysis AI. Always respond with valid JSON only. No markdown, no explanation.',
+                    },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.1,      // Low temp for consistency
+                max_tokens: 4096,
+                response_format: { type: 'json_object' },
+            }),
         },
-        body: JSON.stringify({
-            model,
-            messages: [
-                {
-                    role: 'system',
-                    content: 'You are a legal contract analysis AI. Always respond with valid JSON only. No markdown, no explanation.',
-                },
-                { role: 'user', content: prompt },
-            ],
-            temperature: 0.1,      // Low temp for consistency
-            max_tokens: 4096,
-            response_format: { type: 'json_object' },
-        }),
-        signal: AbortSignal.timeout(20_000), // 20s timeout (llama responds in 1-5s)
-    });
+        API_TIMEOUT_MS,
+    );
 
     if (!response.ok) {
         const body = await response.text();
@@ -190,6 +214,7 @@ async function callGroqModel(prompt: string, model: string): Promise<string> {
     const content = data.choices[0]?.message?.content;
     if (!content) throw new Error(`Groq model ${model} returned empty response`);
 
+    log.debug({ model, contentLength: content.length }, 'Groq API response received');
     return content;
 }
 

@@ -1,4 +1,5 @@
 import { createLogger } from '../lib/logger.js';
+import { fetchWithTimeout } from '../lib/timeout.js';
 import type { ExtractedClause } from './prompts.js';
 import { buildRiskPrompt } from './prompts.js';
 import { AIServiceError } from '../lib/errors.js';
@@ -30,23 +31,26 @@ export async function analyzeRiskDeep(clauses: ExtractedClause[]): Promise<DeepR
 
     for (const model of models) {
         try {
-            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json',
+            const response = await fetchWithTimeout(
+                'https://api.groq.com/openai/v1/chat/completions',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages: [
+                            { role: 'system', content: 'You are a legal risk analyst.' },
+                            { role: 'user', content: prompt },
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 2000,
+                    }),
                 },
-                body: JSON.stringify({
-                    model,
-                    messages: [
-                        { role: 'system', content: 'You are a legal risk analyst.' },
-                        { role: 'user', content: prompt },
-                    ],
-                    temperature: 0.1,
-                    max_tokens: 2000,
-                }),
-                signal: AbortSignal.timeout(20_000), // 20s timeout (llama responds in 1-5s)
-            });
+                20_000, // 20s — reliable setTimeout-based timeout
+            );
 
             if (!response.ok) {
                 const errorBody = await response.text();

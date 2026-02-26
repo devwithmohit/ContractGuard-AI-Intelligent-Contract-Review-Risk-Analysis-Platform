@@ -1,6 +1,7 @@
 import { Worker, type Job } from 'bullmq';
 import { getRedisOptions } from '../lib/redis.js';
 import { createLogger } from '../lib/logger.js';
+import { withTimeout } from '../lib/timeout.js';
 import { QUEUE_NAMES, type ContractAnalysisJobData, enqueueEmbeddingGeneration } from '../services/queue.service.js';
 
 // DB queries
@@ -47,9 +48,37 @@ const CONCURRENCY = 2; // Process 2 contracts simultaneously
 async function processContractAnalysis(
     job: Job<ContractAnalysisJobData>,
 ): Promise<void> {
-    const { contractId, orgId, filePath, fileType, contractType } = job.data;
+    const { contractId, orgId } = job.data;
 
     log.info({ jobId: job.id, contractId, orgId }, '▶ Starting contract analysis pipeline');
+
+    // ── Step 1: Mark as processing ────────────────────────────
+    await updateContractStatus(contractId, 'processing');
+
+    try {
+        await withTimeout(
+            runAnalysisPipeline(job),
+            10 * 60 * 1000, // 10 min hard cap for entire pipeline
+            `Contract analysis pipeline for ${contractId}`,
+        );
+    } catch (err) {
+        log.error({ err, contractId, jobId: job.id }, '❌ Contract analysis pipeline failed');
+
+        await updateContractStatus(contractId, 'error').catch((updateErr) => {
+            log.error({ err: updateErr }, 'Failed to update contract status to error');
+        });
+
+        throw err; // Re-throw so BullMQ marks the job as failed and can retry
+    }
+}
+
+/**
+ * The actual 9-step pipeline, extracted so it can be wrapped with withTimeout().
+ */
+async function runAnalysisPipeline(
+    job: Job<ContractAnalysisJobData>,
+): Promise<void> {
+    const { contractId, orgId, filePath, fileType, contractType } = job.data;
 
     const pipelineStart = Date.now();
     const stepTimings: Record<string, number> = {};
@@ -59,10 +88,6 @@ async function processContractAnalysis(
         await job.updateProgress({ step, label, total: 9 });
         log.info({ jobId: job.id, contractId, step: `${step}/9`, label, elapsedMs: stepTimings[`step${step}`] }, `Pipeline step`);
     };
-
-    // ── Step 1: Mark as processing ────────────────────────────
-    await updateProgress(1, 'Initializing analysis');
-    await updateContractStatus(contractId, 'processing');
 
     try {
         // ── Step 2: Download file ─────────────────────────────
@@ -204,14 +229,8 @@ async function processContractAnalysis(
             '✅ Contract analysis pipeline complete',
         );
     } catch (err) {
-        // Mark contract as errored so UI can show failure state
-        log.error({ err, contractId, jobId: job.id }, '❌ Contract analysis pipeline failed');
-
-        await updateContractStatus(contractId, 'error').catch((updateErr) => {
-            log.error({ err: updateErr }, 'Failed to update contract status to error');
-        });
-
-        throw err; // Re-throw so BullMQ marks the job as failed and can retry
+        // Re-throw so the outer handler in processContractAnalysis catches it
+        throw err;
     }
 }
 
@@ -233,9 +252,9 @@ export function startContractAnalysisWorker(): Worker<ContractAnalysisJobData> {
             stalledInterval: 30_000,
             maxStalledCount: 2,
 
-            // Lock renewal: renew lock every 15s
-            lockDuration: 60_000,
-            lockRenewTime: 15_000,
+            // Lock renewal: pipeline can take up to 10 min, so lock must cover that
+            lockDuration: 12 * 60_000, // 12 min (exceeds 10 min pipeline timeout)
+            lockRenewTime: 30_000,     // Renew every 30s
         },
     );
 
